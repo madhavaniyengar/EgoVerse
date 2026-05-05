@@ -926,6 +926,13 @@ class ZarrDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         return self.total_frames
 
+    def _chunk_end_idx(self, start_idx: int, horizon: int, key_type: str | None) -> int:
+        """End index (exclusive) for a windowed read starting at ``start_idx``.
+
+        Subclasses can override to add per-key-type clamping (e.g., annotation EOS).
+        """
+        return min(start_idx + horizon, self.total_frames)
+
     def _pad_sequences(self, data, horizon: int | None) -> dict:
         if horizon is None:
             return data
@@ -964,7 +971,7 @@ class ZarrDataset(torch.utils.data.Dataset):
                 continue
 
             if horizon is not None:
-                end_idx = min(idx + horizon, self.total_frames)
+                end_idx = self._chunk_end_idx(idx, horizon, key_type)
                 read_interval = (idx, end_idx)
             else:
                 read_interval = (idx, None)
@@ -1040,6 +1047,60 @@ class ZarrDataset(torch.utils.data.Dataset):
         data["metadata.robot_name"] = get_embodiment_id(self.embodiment)
         data["embodiment"] = get_embodiment_id(self.embodiment)
         return data
+
+
+class ZarrAnnotationCutoffDataset(ZarrDataset):
+    """ZarrDataset that clamps action chunks at the end of the enclosing annotation.
+
+    Standard chunking from the start frame, but action reads stop at EOS+1 of the
+    annotation span containing the start frame. The chunk is then padded out to
+    ``horizon`` via the base ``_pad_sequences`` (repeat-last), so frames beyond
+    EOS become the last action of the interval rather than crossing into the
+    next annotation.
+
+    If the start frame is not inside any annotation, behaves like the base class.
+    """
+
+    def init_episode(self):
+        super().init_episode()
+        self._frame_to_ann_end: dict[int, int] | None = None
+
+    def _build_frame_to_ann_end(self) -> dict[int, int]:
+        """Map ``frame_idx -> ann_end`` (exclusive) for every frame inside an
+        annotation span. Annotations use half-open ``[start_idx, end_idx)``.
+        """
+        mapping: dict[int, int] = {}
+        for ann in self._load_annotations():
+            start_idx = int(ann.get("start_idx", -1))
+            end_idx = int(ann.get("end_idx", -1))
+            if start_idx < 0 or end_idx <= start_idx:
+                continue
+            for idx in range(start_idx, end_idx):
+                mapping[idx] = end_idx
+        return mapping
+
+    def _chunk_end_idx(self, start_idx: int, horizon: int, key_type: str | None) -> int:
+        end_idx = super()._chunk_end_idx(start_idx, horizon, key_type)
+        if key_type != "action_keys":
+            return end_idx
+        if self._frame_to_ann_end is None:
+            self._frame_to_ann_end = self._build_frame_to_ann_end()
+        ann_end = self._frame_to_ann_end.get(start_idx)
+        if ann_end is None:
+            return end_idx
+        return min(end_idx, ann_end)
+
+
+class S3AnnotationCutoffEpisodeResolver(S3EpisodeResolver):
+    """S3EpisodeResolver that loads ZarrAnnotationCutoffDataset instances."""
+
+    _dataset_class = ZarrAnnotationCutoffDataset
+
+
+class LocalAnnotationCutoffEpisodeResolver(LocalEpisodeResolver):
+    """LocalEpisodeResolver that loads ZarrAnnotationCutoffDataset instances."""
+
+    _dataset_class = ZarrAnnotationCutoffDataset
 
 
 class ZarrEpisode:
