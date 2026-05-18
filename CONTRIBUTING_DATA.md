@@ -344,6 +344,13 @@ The root group's `.attrs` dictionary is the **episode metadata**. It is written 
 - **Zarr format version**: always **v3** (`zarr_format=3`).
 
 See example usage in eva_to_zarr.py and aria_to_zarr.py.
+
+### 5.5 Episode Preview MP4 (sibling artifact)
+
+Alongside each `<episode_hash>.zarr` store, write a preview video of the egocentric RGB stream named **`<episode_hash>.mp4`** (e.g. `2026-03-15-14-22-10-000000.mp4`). The Mecka AI dataset viz looks previews up by this exact filename, so any deviation from the `<episode_hash>.mp4` convention will break it.
+
+Any standard MP4 encoder works. If it's convenient, the [`save_preview_mp4`](egomimic/utils/video_utils.py) helper is available — `aria_to_zarr.py` and `eva_to_zarr.py` use it (via the `--save-mp4` flag) and emit the file next to the `.zarr` directory.
+
 ---
 
 ## 6. Coordinate Frame Conventions
