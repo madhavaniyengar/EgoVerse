@@ -12,6 +12,19 @@ Pipeline:
 5. Render side-by-side: left half = Aria viz with Aria.FINGER_EDGES; right
    half = fitted MANO viz with Human (=Mecka) FINGER_EDGES.
 6. Write mp4 to scratch/aria_to_mano.mp4.
+
+Prerequisites (not checked in):
+- MANO PyTorch loader: clone github.com/otaheri/MANO into <repo>/external/MANO/
+  and `uv pip install -e external/MANO --no-build-isolation`.
+- MANO model files MANO_RIGHT.pkl and MANO_LEFT.pkl: register and download
+  from https://mano.is.tue.mpg.de/ (academic non-commercial license; not
+  redistributable, hence not in this repo). Place them at:
+      <repo>/external_ckpts/mano/MANO_RIGHT.pkl
+      <repo>/external_ckpts/mano/MANO_LEFT.pkl
+- Python 3.11 + numpy>=1.20 compat patches for chumpy 0.70:
+  s/inspect.getargspec/inspect.getfullargspec/ in chumpy/ch.py, and replace
+  the `from numpy import bool, int, ...` line in chumpy/__init__.py with
+  `from numpy import nan, inf`.
 """
 
 from __future__ import annotations
@@ -231,20 +244,51 @@ def fit_mano_to_aria_batched(aria_kp, is_rhand, n_iters, lr, beta_reg):
     return canonical
 
 
+FINGER_LEGEND = [
+    ("thumb",  (255, 100, 100)),
+    ("index",  (100, 255, 100)),
+    ("middle", (100, 100, 255)),
+    ("ring",   (255, 255, 100)),
+    ("pinky",  (255, 100, 255)),
+]
+
+
+def _add_title_bar(panel, lines, bar_h=70):
+    """Prepend a black bar at the top of `panel` with `lines` of white text."""
+    w = panel.shape[1]
+    bar = np.zeros((bar_h, w, 3), dtype=panel.dtype)
+    y = 22
+    for line in lines:
+        cv2.putText(bar, line, (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        y += 22
+    return np.concatenate([bar, panel], axis=0)
+
+
+def _draw_legend(panel):
+    """Draw a finger color legend in the top-right corner of `panel`."""
+    x0 = panel.shape[1] - 130
+    y = 20
+    cv2.putText(panel, "fingers:", (x0, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+    y += 18
+    for name, color in FINGER_LEGEND:
+        cv2.rectangle(panel, (x0, y - 10), (x0 + 14, y + 2), color, -1)
+        cv2.putText(panel, name, (x0 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+        y += 16
+    return panel
+
+
 def render_side_by_side(rows, mano_left_canonical, mano_right_canonical):
-    """Render aria-viz | mano-viz side-by-side per frame."""
+    """Render aria-viz | mano-viz side-by-side with on-screen labels."""
     frames = []
+    n = len(rows)
     for i, row in enumerate(rows):
         batch = row["batch"]
         aria_vis = Aria.viz_transformed_batch(
             batch, mode="keypoints", viz_batch_key="actions_keypoints"
         )
-
-        # Build MANO viz tensor (126,) = left_21*3 + right_21*3, no wrist prefix.
         left_flat = mano_left_canonical[i].reshape(-1).numpy()
         right_flat = mano_right_canonical[i].reshape(-1).numpy()
         viz_data = np.concatenate([left_flat, right_flat])  # (126,)
-        # Aria episodes use intrinsics_key "base"
         image_t = batch[Aria.VIZ_IMAGE_KEY][0]
         if image_t.ndim == 3 and image_t.shape[0] in (1, 3):
             image_t = image_t.permute(1, 2, 0)
@@ -255,17 +299,36 @@ def render_side_by_side(rows, mano_left_canonical, mano_right_canonical):
             image=image, viz_data=viz_data, mode="keypoints", intrinsics_key="base"
         )
 
+        # Equal-height padding
         h = max(aria_vis.shape[0], mano_vis.shape[0])
         def pad(im):
             if im.shape[0] != h:
-                pad_amt = h - im.shape[0]
-                im = cv2.copyMakeBorder(im, 0, pad_amt, 0, 0, cv2.BORDER_CONSTANT)
+                im = cv2.copyMakeBorder(im, 0, h - im.shape[0], 0, 0, cv2.BORDER_CONSTANT)
             return im
-        a = pad(aria_vis); m = pad(mano_vis)
-        # Labels
-        cv2.putText(a, "Aria (original)", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-        cv2.putText(m, "Aria->MANO (fit, canonical order)", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2)
-        combined = np.concatenate([a, m], axis=1)
+        aria_vis = pad(aria_vis); mano_vis = pad(mano_vis)
+        aria_vis = _draw_legend(aria_vis.copy())
+        mano_vis = _draw_legend(mano_vis.copy())
+
+        aria_vis = _add_title_bar(
+            aria_vis,
+            ["LEFT: Aria (original 21 kp/hand)", "edges: Aria layout (palm=5, tips=0-4)"],
+        )
+        mano_vis = _add_title_bar(
+            mano_vis,
+            ["RIGHT: Aria->MANO fit (per-frame optimization)", "edges: canonical MANO (wrist=0, thumb=1-4...)"],
+        )
+
+        # Vertical divider strip
+        sep = np.full((aria_vis.shape[0], 4, 3), 80, dtype=aria_vis.dtype)
+        combined = np.concatenate([aria_vis, sep, mano_vis], axis=1)
+
+        # Frame counter footer
+        footer = np.zeros((28, combined.shape[1], 3), dtype=combined.dtype)
+        cv2.putText(
+            footer, f"frame {i+1}/{n}   |   fit: 400 Adam iters, MANO PCA-45 + beta-10 + global R/t per hand   |   correspondence is hand-coded (see script header)",
+            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (220, 220, 220), 1, cv2.LINE_AA,
+        )
+        combined = np.concatenate([combined, footer], axis=0)
         frames.append(combined)
     return frames
 
@@ -286,8 +349,14 @@ def main() -> None:
 
     print("Rendering...")
     frames = render_side_by_side(rows, mano_left, mano_right)
-    mpy.write_video(str(OUT_MP4), frames, fps=30)
-    print(f"Wrote {OUT_MP4} ({len(frames)} frames)")
+    mpy.write_video(str(OUT_MP4), frames, fps=10)
+    print(f"Wrote {OUT_MP4} ({len(frames)} frames at 10 fps -> {len(frames)/10:.1f}s)")
+    # Spot-frame PNGs for static inspection if player misbehaves
+    import imageio
+    for idx in [0, len(frames)//3, 2*len(frames)//3, len(frames)-1]:
+        png_path = SCRATCH_DIR / f"aria_to_mano_frame_{idx:03d}.png"
+        imageio.imwrite(png_path, frames[idx])
+    print(f"Spot PNGs in {SCRATCH_DIR}/aria_to_mano_frame_*.png")
 
 
 if __name__ == "__main__":
