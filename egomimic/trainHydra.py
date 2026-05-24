@@ -12,6 +12,7 @@ from lightning.pytorch.plugins.environments import SLURMEnvironment
 from omegaconf import DictConfig, OmegaConf, open_dict
 from tabulate import tabulate
 
+import egomimic.utils.hydra_resolvers  # noqa: F401  -- registers OmegaConf resolvers
 from egomimic.eval.eval import Eval
 from egomimic.pl_utils.pl_model import ModelWrapper
 from egomimic.rldb.zarr.utils import set_global_seed
@@ -23,6 +24,7 @@ from egomimic.utils.pylogger import RankedLogger
 from egomimic.utils.utils import extras, task_wrapper
 
 OmegaConf.register_new_resolver("eval", eval)
+
 log = RankedLogger(__name__, rank_zero_only=True)
 
 
@@ -239,14 +241,20 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         eval_obj.trainer = trainer
         eval_obj.model = model.model
         model.evaluator = eval_obj
-        # Load checkpoint weights manually so we can reset the epoch counter
-        ckpt_path = cfg.get("ckpt_path")
-        if ckpt_path:
-            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            model.load_state_dict(checkpoint["state_dict"], strict=False)
-            log.info(f"Loaded weights from {ckpt_path}")
-        log.info("Starting evaluation!")
-        trainer.validate(model=model, datamodule=datamodule)
+
+        if hasattr(eval_obj, "run"):
+            eval_obj.run(trainer, model, datamodule, cfg)
+        else:
+            # Default: load checkpoint + validate (unchanged from main)
+            ckpt_path = cfg.get("ckpt_path")
+            if ckpt_path:
+                checkpoint = torch.load(
+                    ckpt_path, map_location="cpu", weights_only=False
+                )
+                model.load_state_dict(checkpoint["state_dict"], strict=False)
+                log.info(f"Loaded weights from {ckpt_path}")
+            log.info("Starting evaluation!")
+            trainer.validate(model=model, datamodule=datamodule)
     else:
         raise ValueError(f"Invalid mode: {mode}")
 
