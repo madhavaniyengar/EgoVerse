@@ -26,6 +26,30 @@ from egomimic.utils.viz_utils import (
 
 class Human(Embodiment):
     ACTION_STRIDE = 3
+    # MANO 21-keypoint topology: 0=wrist, 1-4 thumb, 5-8 index, 9-12 middle, 13-16 ring, 17-20 pinky.
+    # Subclasses with non-MANO conventions (e.g. Aria) override these.
+    FINGER_EDGES = [
+        (0, 1), (1, 2), (2, 3), (3, 4),         # thumb
+        (0, 5), (5, 6), (6, 7), (7, 8),         # index
+        (0, 9), (9, 10), (10, 11), (11, 12),    # middle
+        (0, 13), (13, 14), (14, 15), (15, 16),  # ring
+        (0, 17), (17, 18), (18, 19), (19, 20),  # pinky
+    ]
+    FINGER_COLORS = {
+        "thumb": (255, 100, 100),
+        "index": (100, 255, 100),
+        "middle": (100, 100, 255),
+        "ring": (255, 255, 100),
+        "pinky": (255, 100, 255),
+    }
+    FINGER_EDGE_RANGES = [
+        ("thumb", 0, 4),
+        ("index", 4, 8),
+        ("middle", 8, 12),
+        ("ring", 12, 16),
+        ("pinky", 16, 20),
+    ]
+    DOT_COLOR = (255, 165, 0)
 
     @classmethod
     def viz(
@@ -69,57 +93,6 @@ class Human(Embodiment):
     ):
         pass
 
-    @abstractmethod
-    def get_transform_list(
-        cls,
-        mode: str,
-    ) -> list[Transform]:
-        pass
-
-
-class Aria(Human):
-    VIZ_INTRINSICS_KEY = "base"
-    ACTION_STRIDE = 3
-    FINGER_EDGES = [
-        (
-            5,
-            6,
-        ),
-        (6, 7),
-        (7, 0),  # thumb
-        (5, 8),
-        (8, 9),
-        (9, 10),
-        (9, 1),  # index
-        (5, 11),
-        (11, 12),
-        (12, 13),
-        (13, 2),  # middle
-        (5, 14),
-        (14, 15),
-        (15, 16),
-        (16, 3),  # ring
-        (5, 17),
-        (17, 18),
-        (18, 19),
-        (19, 4),  # pinky
-    ]
-    FINGER_COLORS = {
-        "thumb": (255, 100, 100),  # red
-        "index": (100, 255, 100),  # green
-        "middle": (100, 100, 255),  # blue
-        "ring": (255, 255, 100),  # yellow
-        "pinky": (255, 100, 255),  # magenta
-    }
-    FINGER_EDGE_RANGES = [
-        ("thumb", 0, 3),
-        ("index", 3, 7),
-        ("middle", 7, 11),
-        ("ring", 11, 15),
-        ("pinky", 15, 19),
-    ]
-    DOT_COLOR = (255, 165, 0)
-
     @classmethod
     def get_transform_list(
         cls,
@@ -134,33 +107,50 @@ class Aria(Human):
         ],
     ) -> list[Transform]:
         if mode == "cartesian":
-            return _build_aria_cartesian_bimanual_transform_list(
-                stride=cls.ACTION_STRIDE
-            )
-        elif mode == "cartesian_padded":
-            return _build_aria_cartesian_bimanual_transform_list(
+            return _build_human_cartesian_bimanual_transform_list(stride=cls.ACTION_STRIDE)
+        if mode == "cartesian_padded":
+            return _build_human_cartesian_bimanual_transform_list(
                 stride=cls.ACTION_STRIDE
             ) + [PadGripperZeros(action_key="actions_cartesian")]
-        elif mode == "cartesian_wristframe_ypr":
-            return _build_aria_cartesian_eef_frame_transform_list(
-                stride=cls.ACTION_STRIDE
-            )
-        elif mode == "keypoints_headframe_ypr":
-            return _build_aria_keypoints_bimanual_transform_list(
+        if mode == "cartesian_wristframe_ypr":
+            return _build_human_cartesian_eef_frame_transform_list(stride=cls.ACTION_STRIDE)
+        if mode == "keypoints_headframe_ypr":
+            return _build_human_keypoints_bimanual_transform_list(
                 stride=cls.ACTION_STRIDE, is_quat=False
             )
-        elif mode == "keypoints_headframe_quat":
-            return _build_aria_keypoints_bimanual_transform_list(
+        if mode == "keypoints_headframe_quat":
+            return _build_human_keypoints_bimanual_transform_list(
                 stride=cls.ACTION_STRIDE, is_quat=True
             )
-        elif mode == "keypoints_wristframe_ypr":
-            return _build_aria_keypoints_eef_frame_transform_list(
+        if mode == "keypoints_wristframe_ypr":
+            return _build_human_keypoints_eef_frame_transform_list(
                 stride=cls.ACTION_STRIDE, is_quat=False
             )
-        elif mode == "keypoints_wristframe_quat":
-            return _build_aria_keypoints_eef_frame_transform_list(
+        if mode == "keypoints_wristframe_quat":
+            return _build_human_keypoints_eef_frame_transform_list(
                 stride=cls.ACTION_STRIDE, is_quat=True
             )
+        raise ValueError(f"Unsupported transform_list mode '{mode}' for {cls.__name__}")
+
+
+class Aria(Human):
+    VIZ_INTRINSICS_KEY = "base"
+    ACTION_STRIDE = 3
+    # Aria's 21-keypoint layout is NOT MANO: 0-4 are fingertips, 5 is the palm root.
+    FINGER_EDGES = [
+        (5, 6), (6, 7), (7, 0),               # thumb
+        (5, 8), (8, 9), (9, 10), (9, 1),      # index
+        (5, 11), (11, 12), (12, 13), (13, 2), # middle
+        (5, 14), (14, 15), (15, 16), (16, 3), # ring
+        (5, 17), (17, 18), (18, 19), (19, 4), # pinky
+    ]
+    FINGER_EDGE_RANGES = [
+        ("thumb", 0, 3),
+        ("index", 3, 7),
+        ("middle", 7, 11),
+        ("ring", 11, 15),
+        ("pinky", 15, 19),
+    ]
 
     @classmethod
     def _get_keymap(
@@ -257,16 +247,6 @@ class Scale(Human):
     ACTION_STRIDE = 1
 
     @classmethod
-    def get_transform_list(
-        cls,
-        mode: Literal["cartesian",],
-    ) -> list[Transform]:
-        if mode == "cartesian":
-            return _build_aria_cartesian_bimanual_transform_list(
-                stride=cls.ACTION_STRIDE
-            )
-
-    @classmethod
     def _get_keymap(
         cls,
         keymap_mode: Literal["cartesian", "keypoints"],
@@ -344,47 +324,6 @@ class Scale(Human):
 class Mecka(Human):
     VIZ_INTRINSICS_KEY = "mecka"
     ACTION_STRIDE = 1
-    # MANO 21-keypoint topology: 0=wrist, 1-4 thumb, 5-8 index, 9-12 middle, 13-16 ring, 17-20 pinky
-    FINGER_EDGES = [
-        (0, 1), (1, 2), (2, 3), (3, 4),         # thumb
-        (0, 5), (5, 6), (6, 7), (7, 8),         # index
-        (0, 9), (9, 10), (10, 11), (11, 12),    # middle
-        (0, 13), (13, 14), (14, 15), (15, 16),  # ring
-        (0, 17), (17, 18), (18, 19), (19, 20),  # pinky
-    ]
-    FINGER_COLORS = {
-        "thumb": (255, 100, 100),
-        "index": (100, 255, 100),
-        "middle": (100, 100, 255),
-        "ring": (255, 255, 100),
-        "pinky": (255, 100, 255),
-    }
-    FINGER_EDGE_RANGES = [
-        ("thumb", 0, 4),
-        ("index", 4, 8),
-        ("middle", 8, 12),
-        ("ring", 12, 16),
-        ("pinky", 16, 20),
-    ]
-    DOT_COLOR = (255, 165, 0)
-
-    @classmethod
-    def get_transform_list(
-        cls,
-        mode: Literal["cartesian", "keypoints_headframe_ypr", "keypoints_headframe_quat"],
-    ) -> list[Transform]:
-        if mode == "cartesian":
-            return _build_aria_cartesian_bimanual_transform_list(
-                stride=cls.ACTION_STRIDE
-            )
-        elif mode == "keypoints_headframe_ypr":
-            return _build_aria_keypoints_bimanual_transform_list(
-                stride=cls.ACTION_STRIDE, is_quat=False
-            )
-        elif mode == "keypoints_headframe_quat":
-            return _build_aria_keypoints_bimanual_transform_list(
-                stride=cls.ACTION_STRIDE, is_quat=True
-            )
 
     @classmethod
     def get_keymap(
@@ -479,7 +418,7 @@ class Mecka(Human):
 
 
 # this works for quat and ypr since actionChunkCoordinateFrameTransform works for both
-def _build_aria_keypoints_revert_eef_frame_transform_list(
+def _build_human_keypoints_revert_eef_frame_transform_list(
     *,
     action_key: str = "actions_keypoints",
     obs_key: str = "observations.state.keypoints",
@@ -566,7 +505,7 @@ def _build_aria_keypoints_revert_eef_frame_transform_list(
     return transform_list
 
 
-def _build_aria_keypoints_eef_frame_transform_list(
+def _build_human_keypoints_eef_frame_transform_list(
     *,
     target_world: str = "obs_head_pose",
     target_world_ypr: str = "obs_head_pose_ypr",
@@ -598,7 +537,7 @@ def _build_aria_keypoints_eef_frame_transform_list(
     stride: int = 3,
     is_quat: bool = True,
 ) -> list[Transform]:
-    transform_list = _build_aria_keypoints_bimanual_transform_list(
+    transform_list = _build_human_keypoints_bimanual_transform_list(
         target_world=target_world,
         target_world_ypr=target_world_ypr,
         target_world_is_quat=target_world_is_quat,
@@ -757,7 +696,7 @@ def _build_aria_keypoints_eef_frame_transform_list(
     return transform_list
 
 
-def _build_aria_keypoints_bimanual_transform_list(
+def _build_human_keypoints_bimanual_transform_list(
     *,
     target_world: str = "obs_head_pose",
     target_world_ypr: str = "obs_head_pose_ypr",
@@ -976,7 +915,7 @@ def _build_aria_keypoints_bimanual_transform_list(
     return transform_list
 
 
-def _build_aria_cartesian_revert_eef_frame_transform_list(
+def _build_human_cartesian_revert_eef_frame_transform_list(
     *,
     action_key: str = "actions_cartesian",
     obs_key: str = "observations.state.ee_pose",
@@ -990,7 +929,7 @@ def _build_aria_cartesian_revert_eef_frame_transform_list(
 ) -> list[Transform]:
     """Revert wrist-frame ARIA cartesian actions back to head (camera) frame.
 
-    Inverse of ``_build_aria_cartesian_eef_frame_transform_list`` for viz: the
+    Inverse of ``_build_human_cartesian_eef_frame_transform_list`` for viz: the
     action chunks live in each side's wrist frame, the proprio ee-poses live in
     headframe (= Aria camera frame). Re-composes ``target_headframe @ chunk_wristframe``
     so action chunks are back in headframe / camera frame.
@@ -1035,7 +974,7 @@ def _build_aria_cartesian_revert_eef_frame_transform_list(
     return transform_list
 
 
-def _build_aria_cartesian_eef_frame_transform_list(
+def _build_human_cartesian_eef_frame_transform_list(
     *,
     target_world: str = "obs_head_pose",
     target_world_ypr: str = "obs_head_pose_ypr",
@@ -1153,7 +1092,7 @@ def _build_aria_cartesian_eef_frame_transform_list(
     return transform_list
 
 
-def _build_aria_cartesian_bimanual_transform_list(
+def _build_human_cartesian_bimanual_transform_list(
     *,
     target_world: str = "obs_head_pose",
     target_world_ypr: str = "obs_head_pose_ypr",
