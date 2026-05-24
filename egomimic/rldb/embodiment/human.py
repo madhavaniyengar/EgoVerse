@@ -344,15 +344,46 @@ class Scale(Human):
 class Mecka(Human):
     VIZ_INTRINSICS_KEY = "mecka"
     ACTION_STRIDE = 1
+    # MANO 21-keypoint topology: 0=wrist, 1-4 thumb, 5-8 index, 9-12 middle, 13-16 ring, 17-20 pinky
+    FINGER_EDGES = [
+        (0, 1), (1, 2), (2, 3), (3, 4),         # thumb
+        (0, 5), (5, 6), (6, 7), (7, 8),         # index
+        (0, 9), (9, 10), (10, 11), (11, 12),    # middle
+        (0, 13), (13, 14), (14, 15), (15, 16),  # ring
+        (0, 17), (17, 18), (18, 19), (19, 20),  # pinky
+    ]
+    FINGER_COLORS = {
+        "thumb": (255, 100, 100),
+        "index": (100, 255, 100),
+        "middle": (100, 100, 255),
+        "ring": (255, 255, 100),
+        "pinky": (255, 100, 255),
+    }
+    FINGER_EDGE_RANGES = [
+        ("thumb", 0, 4),
+        ("index", 4, 8),
+        ("middle", 8, 12),
+        ("ring", 12, 16),
+        ("pinky", 16, 20),
+    ]
+    DOT_COLOR = (255, 165, 0)
 
     @classmethod
     def get_transform_list(
         cls,
-        mode: Literal["cartesian",],
+        mode: Literal["cartesian", "keypoints_headframe_ypr", "keypoints_headframe_quat"],
     ) -> list[Transform]:
         if mode == "cartesian":
             return _build_aria_cartesian_bimanual_transform_list(
                 stride=cls.ACTION_STRIDE
+            )
+        elif mode == "keypoints_headframe_ypr":
+            return _build_aria_keypoints_bimanual_transform_list(
+                stride=cls.ACTION_STRIDE, is_quat=False
+            )
+        elif mode == "keypoints_headframe_quat":
+            return _build_aria_keypoints_bimanual_transform_list(
+                stride=cls.ACTION_STRIDE, is_quat=True
             )
 
     @classmethod
