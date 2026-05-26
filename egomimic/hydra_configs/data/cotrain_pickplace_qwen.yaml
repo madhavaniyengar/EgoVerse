@@ -21,7 +21,7 @@ train_datasets:
       folder_path: /tmp/egoverseS3ZarrDataset
       key_map:
         _target_: egomimic.rldb.embodiment.eva.Eva.get_keymap
-        keymap_mode: cartesian_pi
+        keymap_mode: cartesian
         annotation_key: annotations
       transform_list:
         _target_: egomimic.rldb.embodiment.eva.Eva.get_transform_list
@@ -59,7 +59,7 @@ valid_datasets:
       folder_path: /tmp/egoverseS3ZarrDataset
       key_map:
         _target_: egomimic.rldb.embodiment.eva.Eva.get_keymap
-        keymap_mode: cartesian_pi
+        keymap_mode: cartesian
         annotation_key: annotations
       transform_list:
         _target_: egomimic.rldb.embodiment.eva.Eva.get_transform_list
