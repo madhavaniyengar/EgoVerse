@@ -10,6 +10,7 @@ from egomimic.rldb.zarr.action_chunk_transforms import (
     ConcatKeys,
     DeleteKeys,
     InterpolatePose,
+    PadGripperZeros,
     PoseCoordinateFrameTransform,
     QuaternionPoseToYPR,
     Reshape,
@@ -124,6 +125,7 @@ class Aria(Human):
         cls,
         mode: Literal[
             "cartesian",
+            "cartesian_padded",
             "cartesian_wristframe_ypr",
             "keypoints_headframe_ypr",
             "keypoints_headframe_quat",
@@ -135,6 +137,10 @@ class Aria(Human):
             return _build_aria_cartesian_bimanual_transform_list(
                 stride=cls.ACTION_STRIDE
             )
+        elif mode == "cartesian_padded":
+            return _build_aria_cartesian_bimanual_transform_list(
+                stride=cls.ACTION_STRIDE
+            ) + [PadGripperZeros(action_key="actions_cartesian")]
         elif mode == "cartesian_wristframe_ypr":
             return _build_aria_cartesian_eef_frame_transform_list(
                 stride=cls.ACTION_STRIDE

@@ -38,7 +38,7 @@ train_datasets:
         annotation_key: annotations
       transform_list:
         _target_: egomimic.rldb.embodiment.human.Aria.get_transform_list
-        mode: cartesian
+        mode: cartesian_padded
     filters:
       _target_: egomimic.rldb.filters.ScaleAnnotationDatasetFilter
       project_name: dense-language
@@ -76,7 +76,7 @@ valid_datasets:
         annotation_key: annotations
       transform_list:
         _target_: egomimic.rldb.embodiment.human.Aria.get_transform_list
-        mode: cartesian
+        mode: cartesian_padded
     filters:
       _target_: egomimic.rldb.filters.ScaleAnnotationDatasetFilter
       project_name: dense-language
