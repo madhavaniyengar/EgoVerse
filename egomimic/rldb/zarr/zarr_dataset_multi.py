@@ -117,13 +117,6 @@ def _is_missing_filter_value(value: object) -> bool:
     return isinstance(missing, (bool, np.bool_)) and bool(missing)
 
 
-def _first_present(*values: object) -> object | None:
-    for value in values:
-        if not _is_missing_filter_value(value):
-            return value
-    return None
-
-
 def _normalize_filter_row(
     row: Mapping[str, Any],
     *,
@@ -136,14 +129,6 @@ def _normalize_filter_row(
 
     if _is_missing_filter_value(normalized.get("is_deleted")):
         normalized["is_deleted"] = False
-
-    robot_name = _first_present(
-        normalized.get("robot_name"),
-        normalized.get("robot_type"),
-        normalized.get("embodiment"),
-    )
-    if robot_name is not None:
-        normalized["robot_name"] = robot_name
 
     return normalized
 
@@ -1736,7 +1721,6 @@ class ZarrDataset(torch.utils.data.Dataset):
                 if isinstance(v, np.ndarray):
                     data[k] = torch.from_numpy(v).to(torch.float32)
 
-            data["metadata.robot_name"] = get_embodiment_id(self.embodiment)
             data["embodiment"] = get_embodiment_id(self.embodiment)
             ep_name = Path(self.episode_path).name
             data["episode_hash"] = ep_name[:-5] if ep_name.endswith(".zarr") else ep_name
