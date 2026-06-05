@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
@@ -18,6 +19,205 @@ from egomimic.utils.pose_utils import T_rot_orientation
 
 ROTATION_MATRIX = np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]])
 T_ROT_CAM = np.array([[0, 0, 1], [1, 0, 0], [0, 1, 0]])
+
+# ---------------------------------------------------------------------------
+# Aria 21-keypoint -> MANO 21-keypoint conversion (per-frame batched fit).
+# Single source of truth for the correspondence tables; the tutorial script
+# egomimic/scripts/tutorials/aria_to_mano_convert.py imports from here.
+#
+# otaheri MANO joint order with return_tips=True (21 joints):
+#   0 wrist, 1-3 index, 4-6 middle, 7-9 pinky, 10-12 ring, 13-15 thumb,
+#   16 thumb_tip, 17 index_tip, 18 middle_tip, 19 ring_tip, 20 pinky_tip
+# Canonical MANO order used by Human.FINGER_EDGES:
+#   0 wrist, 1-4 thumb (CMC, MCP, IP, tip), 5-8 index, 9-12 middle,
+#   13-16 ring, 17-20 pinky
+OTAHERI_TO_CANONICAL = [
+    0,              # wrist
+    13, 14, 15, 16, # thumb (3 joints + tip)
+    1, 2, 3, 17,    # index
+    4, 5, 6, 18,    # middle
+    10, 11, 12, 19, # ring
+    7, 8, 9, 20,    # pinky
+]
+
+# Aria's 21-keypoint layout: 0-4 fingertips (thumb..pinky), 5 palm root/wrist,
+# 6-7 thumb intermediates, 8-10 index, 11-13 middle, 14-16 ring, 17-19 pinky,
+# 20 palm center (dropped from the fit loss).
+# Aria idx -> otaheri MANO target idx; MANO's thumb CMC has no Aria source and
+# is filled in by MANO's kinematic prior.
+ARIA_TO_OTAHERI = {
+    5: 0,    # wrist
+    6: 14,   # thumb MCP
+    7: 15,   # thumb IP
+    0: 16,   # thumb tip
+    8: 1,    # index1
+    9: 2,    # index2
+    10: 3,   # index3
+    1: 17,   # index tip
+    11: 4,   # middle1
+    12: 5,   # middle2
+    13: 6,   # middle3
+    2: 18,   # middle tip
+    14: 10,  # ring1
+    15: 11,  # ring2
+    16: 12,  # ring3
+    3: 19,   # ring tip
+    17: 7,   # pinky1
+    18: 8,   # pinky2
+    19: 9,   # pinky3
+    4: 20,   # pinky tip
+}
+ARIA_IDX_USED = list(ARIA_TO_OTAHERI.keys())  # length 20
+MANO_IDX_TARGET = [ARIA_TO_OTAHERI[a] for a in ARIA_IDX_USED]  # length 20
+
+# The extractor marks missing hand data with 1e9; clean_data() drops rows
+# >= 1e8, but keep the guard here so the converter is safe on raw inputs too.
+_ARIA_INVALID_SENTINEL = 1e8
+
+ARIA_WRIST_IDX = 5  # palm-root/wrist index in Aria's 21-kp layout
+
+
+def _default_mano_model_dir() -> str:
+    repo_root = Path(__file__).resolve().parents[3]
+    return str(repo_root / "external_ckpts" / "mano")
+
+
+def _default_mano_device() -> torch.device:
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def fit_mano_to_aria_batched(
+    aria_kp: torch.Tensor,
+    is_rhand: bool,
+    model_dir: str | None = None,
+    device: torch.device | str | None = None,
+    n_iters: int = 400,
+    lr: float = 0.02,
+    beta_reg: float = 0.01,
+    verbose: bool = False,
+) -> torch.Tensor:
+    """Batched MANO fit against Aria keypoints, in whatever frame they're in.
+
+    aria_kp: (N, 21, 3) Aria-layout keypoints (NaN = invalid point).
+    Returns (N, 21, 3) canonical-MANO-ordered keypoints on CPU, in the same
+    frame as the input; frames with an invalid wrist are all-NaN.
+    """
+    import mano  # lazy: optional dep + license-gated model files
+
+    model_dir = model_dir or _default_mano_model_dir()
+    device = torch.device(device) if device is not None else _default_mano_device()
+
+    N = aria_kp.shape[0]
+    aria_kp = aria_kp.to(device)
+
+    valid_mask = torch.isfinite(aria_kp).all(dim=-1)  # (N, 21)
+
+    init_translation = torch.where(
+        valid_mask[:, ARIA_WRIST_IDX : ARIA_WRIST_IDX + 1, None],
+        aria_kp[:, ARIA_WRIST_IDX : ARIA_WRIST_IDX + 1, :],
+        torch.zeros_like(aria_kp[:, ARIA_WRIST_IDX : ARIA_WRIST_IDX + 1, :]),
+    ).squeeze(1)  # (N, 3)
+
+    model = mano.load(
+        model_path=model_dir,
+        is_rhand=is_rhand,
+        num_pca_comps=45,
+        batch_size=N,
+        flat_hand_mean=False,
+    ).to(device)
+    for p in model.parameters():
+        p.requires_grad_(False)
+
+    theta = torch.zeros(N, 45, device=device, requires_grad=True)
+    beta = torch.zeros(N, 10, device=device, requires_grad=True)
+    R_global = torch.zeros(N, 3, device=device, requires_grad=True)
+    t_global = init_translation.detach().clone().requires_grad_(True)
+
+    opt = torch.optim.Adam([theta, beta, R_global, t_global], lr=lr)
+
+    aria_idx_t = torch.tensor(ARIA_IDX_USED, device=device, dtype=torch.long)
+    mano_idx_t = torch.tensor(MANO_IDX_TARGET, device=device, dtype=torch.long)
+
+    targets = aria_kp.index_select(1, aria_idx_t)  # (N, 20, 3)
+    point_valid = torch.isfinite(targets).all(dim=-1)  # (N, 20)
+    targets = torch.nan_to_num(targets, nan=0.0)
+
+    for step in range(n_iters):
+        out = model(
+            betas=beta, global_orient=R_global, hand_pose=theta,
+            transl=t_global, return_verts=True, return_tips=True,
+        )
+        pred = out.joints.index_select(1, mano_idx_t)  # (N, 20, 3)
+
+        per_point_err = ((pred - targets) ** 2).sum(dim=-1)  # (N, 20)
+        masked = per_point_err * point_valid.float()
+        denom = point_valid.sum().clamp(min=1).float()
+        pos_loss = masked.sum() / denom
+        reg_loss = beta_reg * (beta**2).sum() / N
+        loss = pos_loss + reg_loss
+        opt.zero_grad(set_to_none=True)
+        loss.backward()
+        opt.step()
+        if verbose and (step % 50 == 0 or step == n_iters - 1):
+            print(f"    iter {step:4d}  pos={pos_loss.item():.5f}  reg={reg_loss.item():.5f}")
+
+    with torch.no_grad():
+        out = model(
+            betas=beta, global_orient=R_global, hand_pose=theta,
+            transl=t_global, return_verts=True, return_tips=True,
+        )
+        mano_kp = out.joints.detach().cpu()  # (N, 21, 3) otaheri order
+
+    perm = torch.tensor(OTAHERI_TO_CANONICAL, dtype=torch.long)
+    canonical = mano_kp.index_select(1, perm)  # (N, 21, 3) canonical order
+
+    frame_valid = valid_mask[:, ARIA_WRIST_IDX].cpu()
+    canonical = torch.where(
+        frame_valid[:, None, None], canonical, torch.full_like(canonical, float("nan"))
+    )
+    return canonical
+
+
+def convert_aria_keypoints_to_mano(
+    keypoints_t63: np.ndarray,
+    is_rhand: bool,
+    model_dir: str | None = None,
+    device: torch.device | str | None = None,
+    n_iters: int = 400,
+    lr: float = 0.02,
+    beta_reg: float = 0.01,
+    chunk_size: int = 512,
+    verbose: bool = False,
+) -> np.ndarray:
+    """Convert one hand's (T, 63) Aria keypoints to (T, 63) canonical MANO.
+
+    Output is in the same coordinate frame as the input. Fits are batched in
+    chunks of `chunk_size` frames to bound memory.
+    """
+    kp = torch.as_tensor(np.asarray(keypoints_t63), dtype=torch.float32).reshape(-1, 21, 3)
+    if kp.shape[0] == 0:
+        return np.asarray(keypoints_t63, dtype=np.float64).reshape(-1, 63)
+    # Sentinel (1e9) -> NaN so the fit's validity masks apply.
+    kp = torch.where(kp.abs() < _ARIA_INVALID_SENTINEL, kp, torch.full_like(kp, float("nan")))
+    outs = []
+    for s in range(0, kp.shape[0], chunk_size):
+        outs.append(
+            fit_mano_to_aria_batched(
+                kp[s : s + chunk_size],
+                is_rhand=is_rhand,
+                model_dir=model_dir,
+                device=device,
+                n_iters=n_iters,
+                lr=lr,
+                beta_reg=beta_reg,
+                verbose=verbose,
+            )
+        )
+    return torch.cat(outs, dim=0).reshape(-1, 63).numpy().astype(np.float64)
 
 
 def undistort_to_linear(
@@ -143,7 +343,20 @@ class AriaVRSExtractor:
     TAGS = ["aria", "robotics", "vrs"]
 
     @staticmethod
-    def process_episode(episode_path, arm: str, low_res=False, height=480, width=640):
+    def process_episode(
+        episode_path,
+        arm: str,
+        low_res=False,
+        height=480,
+        width=640,
+        convert_mano: bool = True,
+        mano_model_dir: str | None = None,
+        mano_device: str | None = None,
+        mano_n_iters: int = 400,
+        mano_lr: float = 0.02,
+        mano_beta_reg: float = 0.01,
+        mano_chunk_size: int = 512,
+    ):
         """
         Extracts all feature keys from a given episode and returns as a dictionary
         Parameters
@@ -152,6 +365,19 @@ class AriaVRSExtractor:
             Path to the VRS file containing the episode data.
         arm : str
             String for which arm to add data for
+        convert_mano : bool
+            If True (default), fit MANO to the raw Aria keypoints and emit:
+              <side>.obs_keypoints      = MANO-converted keypoints (canonical
+                                          MANO joint order, world frame) —
+                                          the key downstream consumers read.
+              <side>.obs_aria_keypoints = raw Aria keypoints (Aria layout),
+                                          preserved for reference.
+            If False, legacy schema: raw Aria keypoints under
+            <side>.obs_keypoints, no <side>.obs_aria_keypoints.
+        mano_model_dir / mano_device / mano_n_iters / mano_lr / mano_beta_reg /
+        mano_chunk_size :
+            MANO fit knobs; defaults match the validated tutorial settings
+            (400 Adam iters @ lr 0.02, beta_reg 0.01, cuda>mps>cpu).
         Returns
         -------
         episode_feats : dict
@@ -286,17 +512,33 @@ class AriaVRSExtractor:
 
         use_left_hand = arm == "left" or arm == "both"
         use_right_hand = arm == "right" or arm == "both"
+
+        mano_cfg = dict(
+            model_dir=mano_model_dir,
+            device=mano_device,
+            n_iters=mano_n_iters,
+            lr=mano_lr,
+            beta_reg=mano_beta_reg,
+            chunk_size=mano_chunk_size,
+        )
+
         if use_left_hand:
             episode_feats["left.obs_ee_pose"] = hand_cartesian_pose[..., :7]
-            episode_feats["left.obs_keypoints"] = hand_keypoints_pose[
-                ..., 7 : 7 + 21 * 3
-            ]
+            left_raw_kp = hand_keypoints_pose[..., 7 : 7 + 21 * 3]
             episode_feats["left.obs_wrist_pose"] = hand_keypoints_pose[..., :7]
+            if convert_mano:
+                episode_feats["left.obs_aria_keypoints"] = left_raw_kp
+                print(f"[MANO] Fitting LEFT hand ({left_raw_kp.shape[0]} frames)...")
+                episode_feats["left.obs_keypoints"] = convert_aria_keypoints_to_mano(
+                    left_raw_kp, is_rhand=False, **mano_cfg
+                )
+            else:
+                episode_feats["left.obs_keypoints"] = left_raw_kp
 
         if use_right_hand:
             if arm == "both":
                 episode_feats["right.obs_ee_pose"] = hand_cartesian_pose[..., 7:]
-                episode_feats["right.obs_keypoints"] = hand_keypoints_pose[
+                right_raw_kp = hand_keypoints_pose[
                     ..., 7 + 21 * 3 + 7 : 7 + 21 * 3 + 7 + 21 * 3
                 ]
                 episode_feats["right.obs_wrist_pose"] = hand_keypoints_pose[
@@ -304,10 +546,16 @@ class AriaVRSExtractor:
                 ]
             elif arm == "right":
                 episode_feats["right.obs_ee_pose"] = hand_cartesian_pose[..., :7]
-                episode_feats["right.obs_keypoints"] = hand_keypoints_pose[
-                    ..., 7 : 7 + 21 * 3
-                ]
+                right_raw_kp = hand_keypoints_pose[..., 7 : 7 + 21 * 3]
                 episode_feats["right.obs_wrist_pose"] = hand_keypoints_pose[..., :7]
+            if convert_mano:
+                episode_feats["right.obs_aria_keypoints"] = right_raw_kp
+                print(f"[MANO] Fitting RIGHT hand ({right_raw_kp.shape[0]} frames)...")
+                episode_feats["right.obs_keypoints"] = convert_aria_keypoints_to_mano(
+                    right_raw_kp, is_rhand=True, **mano_cfg
+                )
+            else:
+                episode_feats["right.obs_keypoints"] = right_raw_kp
         episode_feats["images.front_1"] = images
         episode_feats["obs_head_pose"] = head_pose
         if use_eye_gaze:
