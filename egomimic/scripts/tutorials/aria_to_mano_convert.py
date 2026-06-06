@@ -33,12 +33,12 @@ from pathlib import Path
 
 import cv2
 import imageio_ffmpeg
-import mano
 import mediapy as mpy
 import numpy as np
 import torch
 
 from egomimic.rldb.embodiment.human import Aria, Mecka
+from egomimic.scripts.aria_process.aria_utils import fit_mano_to_aria_batched
 from egomimic.rldb.filters import DatasetFilter
 from egomimic.rldb.zarr.zarr_dataset_multi import MultiDataset, S3EpisodeResolver
 from egomimic.utils.aws.aws_data_utils import load_env
@@ -49,7 +49,6 @@ mpy.set_ffmpeg(imageio_ffmpeg.get_ffmpeg_exe())
 REPO_ROOT = Path(__file__).resolve().parents[2].parent
 SCRATCH_DIR = REPO_ROOT / "scratch"
 CACHE_DIR = SCRATCH_DIR / "aria_to_mano_cache"
-MANO_MODEL_DIR = REPO_ROOT / "external_ckpts" / "mano"
 OUT_MP4 = SCRATCH_DIR / "aria_to_mano.mp4"
 SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -59,59 +58,9 @@ NUM_FIT_ITERS = 400
 LR = 0.02
 BETA_REG = 0.01
 
-DEVICE = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
-# otaheri MANO joint order with return_tips=True (21 joints):
-#   0 wrist, 1-3 index, 4-6 middle, 7-9 pinky, 10-12 ring, 13-15 thumb,
-#   16 thumb_tip, 17 index_tip, 18 middle_tip, 19 ring_tip, 20 pinky_tip
-# Canonical MANO order used by Human.FINGER_EDGES:
-#   0 wrist, 1-4 thumb (CMC, MCP, IP, tip), 5-8 index, 9-12 middle,
-#   13-16 ring, 17-20 pinky
-OTAHERI_TO_CANONICAL = [
-    0,              # wrist
-    13, 14, 15, 16, # thumb (3 joints + tip)
-    1, 2, 3, 17,    # index
-    4, 5, 6, 18,    # middle
-    10, 11, 12, 19, # ring
-    7, 8, 9, 20,    # pinky
-]
-
-# Aria's 21-keypoint layout (read from Aria.FINGER_EDGES + user's note about idx 20):
-#   0-4 = fingertips (thumb, index, middle, ring, pinky)
-#   5 = palm root / wrist
-#   6,7 = thumb intermediates  (Aria has 2; MANO has 3 incl. CMC)
-#   8,9,10 = index intermediates (3, like MANO)
-#   11,12,13 = middle intermediates
-#   14,15,16 = ring intermediates
-#   17,18,19 = pinky intermediates
-#   20 = palm center (dropped from loss)
-#
-# Aria idx -> otaheri MANO target idx (per-point correspondence for the fit).
-# We skip Aria's palm-center (20) and let MANO's thumb1/CMC float.
-ARIA_TO_OTAHERI = {
-    5: 0,    # wrist
-    6: 14,   # thumb MCP    (Aria's 2 thumb mid joints -> MANO MCP+IP, skip CMC)
-    7: 15,   # thumb IP
-    0: 16,   # thumb tip
-    8: 1,    # index1
-    9: 2,    # index2
-    10: 3,   # index3
-    1: 17,   # index tip
-    11: 4,   # middle1
-    12: 5,   # middle2
-    13: 6,   # middle3
-    2: 18,   # middle tip
-    14: 10,  # ring1
-    15: 11,  # ring2
-    16: 12,  # ring3
-    3: 19,   # ring tip
-    17: 7,   # pinky1
-    18: 8,   # pinky2
-    19: 9,   # pinky3
-    4: 20,   # pinky tip
-}
-ARIA_IDX_USED = list(ARIA_TO_OTAHERI.keys())          # length 20
-MANO_IDX_TARGET = [ARIA_TO_OTAHERI[a] for a in ARIA_IDX_USED]  # length 20
+# Correspondence tables (ARIA_TO_OTAHERI, OTAHERI_TO_CANONICAL) and the
+# batched fit live in egomimic/scripts/aria_process/aria_utils.py, shared
+# with the aria_to_zarr pipeline.
 
 
 def fetch_episode_loader():
@@ -162,86 +111,6 @@ def gather_aria_keypoints(loader, n_frames):
         )
     print(f"Collected {len(rows)} frames")
     return rows
-
-
-def fit_mano_to_aria_batched(aria_kp, is_rhand, n_iters, lr, beta_reg):
-    """Batched MANO fit. aria_kp: (N, 21, 3). Returns canonical MANO kp (N, 21, 3)."""
-    N = aria_kp.shape[0]
-    aria_kp = aria_kp.to(DEVICE)
-
-    # Per-frame validity (Aria stores invalid kps as NaN or implausible values).
-    valid_mask = torch.isfinite(aria_kp).all(dim=-1)  # (N, 21)
-
-    # Wrist init: aria[5] is wrist
-    init_translation = torch.where(
-        valid_mask[:, 5:6, None],
-        aria_kp[:, 5:6, :],
-        torch.zeros_like(aria_kp[:, 5:6, :]),
-    ).squeeze(1)  # (N, 3)
-
-    model = mano.load(
-        model_path=str(MANO_MODEL_DIR),
-        is_rhand=is_rhand,
-        num_pca_comps=45,
-        batch_size=N,
-        flat_hand_mean=False,
-    ).to(DEVICE)
-    for p in model.parameters():
-        p.requires_grad_(False)
-
-    theta = torch.zeros(N, 45, device=DEVICE, requires_grad=True)
-    beta = torch.zeros(N, 10, device=DEVICE, requires_grad=True)
-    R_global = torch.zeros(N, 3, device=DEVICE, requires_grad=True)
-    t_global = init_translation.detach().clone().requires_grad_(True)
-
-    opt = torch.optim.Adam([theta, beta, R_global, t_global], lr=lr)
-
-    # Targets: aria_kp[:, ARIA_IDX_USED, :] -> match against otaheri MANO[:, MANO_IDX_TARGET, :]
-    aria_idx_t = torch.tensor(ARIA_IDX_USED, device=DEVICE, dtype=torch.long)
-    mano_idx_t = torch.tensor(MANO_IDX_TARGET, device=DEVICE, dtype=torch.long)
-
-    targets = aria_kp.index_select(1, aria_idx_t)  # (N, 20, 3)
-    point_valid = torch.isfinite(targets).all(dim=-1)  # (N, 20)
-
-    final_loss = torch.tensor(0.0)
-    for step in range(n_iters):
-        out = model(
-            betas=beta, global_orient=R_global, hand_pose=theta,
-            transl=t_global, return_verts=True, return_tips=True,
-        )
-        mano_kp = out.joints  # (N, 21, 3), otaheri ordering
-        pred = mano_kp.index_select(1, mano_idx_t)  # (N, 20, 3)
-
-        diff = (pred - targets) ** 2          # (N, 20, 3)
-        per_point_err = diff.sum(dim=-1)      # (N, 20)
-        masked = per_point_err * point_valid.float()
-        denom = point_valid.sum().clamp(min=1).float()
-        pos_loss = masked.sum() / denom
-        reg_loss = beta_reg * (beta ** 2).sum() / N
-        loss = pos_loss + reg_loss
-        opt.zero_grad(set_to_none=True)
-        loss.backward()
-        opt.step()
-        if step % 50 == 0 or step == n_iters - 1:
-            print(f"    iter {step:4d}  pos={pos_loss.item():.5f}  reg={reg_loss.item():.5f}")
-        final_loss = loss
-
-    with torch.no_grad():
-        out = model(
-            betas=beta, global_orient=R_global, hand_pose=theta,
-            transl=t_global, return_verts=True, return_tips=True,
-        )
-        mano_kp = out.joints.detach().cpu()  # (N, 21, 3) otaheri order
-
-    perm = torch.tensor(OTAHERI_TO_CANONICAL, dtype=torch.long)
-    canonical = mano_kp.index_select(1, perm)  # (N, 21, 3) canonical order
-
-    # If a frame's wrist was invalid, blank that frame's keypoints with NaN.
-    frame_valid = valid_mask[:, 5].cpu()  # wrist valid?
-    canonical = torch.where(
-        frame_valid[:, None, None], canonical, torch.full_like(canonical, float("nan"))
-    )
-    return canonical
 
 
 FINGER_LEGEND = [
@@ -343,9 +212,9 @@ def main() -> None:
     print(f"Right aria valid wrist count: {torch.isfinite(aria_right[:,5]).all(-1).sum().item()}/{len(rows)}")
 
     print("Fitting LEFT hand...")
-    mano_left = fit_mano_to_aria_batched(aria_left, is_rhand=False, n_iters=NUM_FIT_ITERS, lr=LR, beta_reg=BETA_REG)
+    mano_left = fit_mano_to_aria_batched(aria_left, is_rhand=False, n_iters=NUM_FIT_ITERS, lr=LR, beta_reg=BETA_REG, verbose=True)
     print("Fitting RIGHT hand...")
-    mano_right = fit_mano_to_aria_batched(aria_right, is_rhand=True, n_iters=NUM_FIT_ITERS, lr=LR, beta_reg=BETA_REG)
+    mano_right = fit_mano_to_aria_batched(aria_right, is_rhand=True, n_iters=NUM_FIT_ITERS, lr=LR, beta_reg=BETA_REG, verbose=True)
 
     print("Rendering...")
     frames = render_side_by_side(rows, mano_left, mano_right)
