@@ -79,7 +79,16 @@ ARIA_WRIST_IDX = 5  # palm-root/wrist index in Aria's 21-kp layout
 
 def _default_mano_model_dir() -> str:
     repo_root = Path(__file__).resolve().parents[3]
-    return str(repo_root / "external_ckpts" / "mano")
+    d = repo_root / "external_ckpts" / "mano"
+    if d.exists():
+        return str(d)
+    # Fallback: pkls bundled inside the mano package itself. Needed on ray
+    # workers — runtime_env working_dir packaging honors .gitignore, so the
+    # gitignored external_ckpts/ never ships, while py_modules (the mano
+    # package, with pkls copied into _bundled_models/) does.
+    import mano as _mano
+
+    return str(Path(_mano.__file__).resolve().parent / "_bundled_models")
 
 
 def _default_mano_device() -> torch.device:
