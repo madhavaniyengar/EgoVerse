@@ -139,7 +139,7 @@ class Aria(Human):
     # Aria's 21-keypoint layout is NOT MANO: 0-4 are fingertips, 5 is the palm root.
     FINGER_EDGES = [
         (5, 6), (6, 7), (7, 0),               # thumb
-        (5, 8), (8, 9), (9, 10), (9, 1),      # index
+        (5, 8), (8, 9), (9, 10), (10, 1),     # index
         (5, 11), (11, 12), (12, 13), (13, 2), # middle
         (5, 14), (14, 15), (15, 16), (16, 3), # ring
         (5, 17), (17, 18), (18, 19), (19, 4), # pinky
