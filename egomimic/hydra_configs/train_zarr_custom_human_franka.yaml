@@ -1,0 +1,8 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_cotrain_custom_human_franka
+  - override data: custom_human_franka
+  - _self_
+
+name: custom_human_franka
+description: hpt_flow_local

@@ -48,3 +48,7 @@ temp_dir/**
 scratch/
 external_ckpts/
 external/MANO/
+
+data/
+wandb_key
+

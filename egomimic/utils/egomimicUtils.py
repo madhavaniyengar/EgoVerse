@@ -60,6 +60,11 @@ MECKA_INTRINSICS = np.array(
     [[fx, 0.0, cx, 0], [0.0, fy, cy, 0], [0.0, 0.0, 1.0, 0]], dtype=np.float64
 )
 
+IDENTITY_INTRINSICS = np.array(
+    [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+    dtype=np.float64,
+)
+
 # Cam to base extrinsics
 EXTRINSICS = {
     "ariaJul29": {
@@ -248,6 +253,10 @@ EXTRINSICS = {
         "left": np.eye(4),
         "right": np.eye(4),
     },
+    "identity": {
+        "left": np.eye(4),
+        "right": np.eye(4),
+    },
 }
 
 INTRINSICS = {
@@ -255,6 +264,7 @@ INTRINSICS = {
     "base_half": ARIA_INTRINSICS_HALF,
     "mecka": MECKA_INTRINSICS,
     "scale": SCALE_INTRINSICS,
+    "identity": IDENTITY_INTRINSICS,
 }
 
 ARIA_T_RGB_CPF = np.array(

@@ -1,13 +1,15 @@
-# # path to root directory
-# # this requires PROJECT_ROOT environment variable to exist
-# # you can replace it with "." if you want the root to be the current working directory
-# root_dir: ${oc.env:PROJECT_ROOT}
+# path to root directory
+root_dir: ${hydra:runtime.cwd}
 
 # # path to data directory
 # data_dir: ${paths.root_dir}/data/
 
 # default folder containing zarr episode datasets
 dataset_dir: /coc/flash7/scratch/egoverseS3ZarrDataset
+
+# local folders containing custom converted Zarr episode datasets
+custom_human_dataset_dir: ./data/custom_human_azure_kinect_zarr
+custom_franka_dataset_dir: ./data/custom_franka_zarr
 
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/

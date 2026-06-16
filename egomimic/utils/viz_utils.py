@@ -150,15 +150,17 @@ def _viz_traj(image, actions, intrinsics_key, **kwargs):
     left_xyz, _, right_xyz, _ = _split_action_pose(actions)
 
     base = image.copy()
-    overlay = draw_actions(
-        base.copy(),
-        type="xyz",
-        color=color,
-        actions=left_xyz,
-        extrinsics=None,
-        intrinsics=intrinsics,
-        arm="left",
-    )
+    overlay = base.copy()
+    if not np.all(left_xyz == 0):
+        overlay = draw_actions(
+            overlay,
+            type="xyz",
+            color=color,
+            actions=left_xyz,
+            extrinsics=None,
+            intrinsics=intrinsics,
+            arm="left",
+        )
     overlay = draw_actions(
         overlay,
         type="xyz",

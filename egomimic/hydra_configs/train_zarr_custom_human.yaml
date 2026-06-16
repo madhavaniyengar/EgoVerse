@@ -1,0 +1,8 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_bc_flow_custom_human
+  - override data: custom_human
+  - _self_
+
+name: custom_human
+description: hpt_flow_local_debug

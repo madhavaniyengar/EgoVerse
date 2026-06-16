@@ -733,6 +733,7 @@ class MultiDataset(torch.utils.data.Dataset):
         percent: float = 0.1,
         valid_ratio: float = 0.2,
         norm_mode: str = "zscore",
+        check_bounds: bool = True,
         state: dict | None = None,
         **kwargs,
     ):
@@ -743,12 +744,15 @@ class MultiDataset(torch.utils.data.Dataset):
             percent: Fraction (when mode="percent").
             valid_ratio: Train/valid split ratio.
             norm_mode: One of "zscore", "minmax", "quantile".
+            check_bounds: If False, skip quantile bounds checking in __getitem__
+                (samples are normalized but never rejected for out-of-range values).
             state: If provided, populate stats fields from this dict (deploy mode).
         """
         super().__init__()
 
         # ---- Stats fields (always present, may be empty) ----
         self.norm_mode = norm_mode
+        self.check_bounds = check_bounds
         self.embodiments: set[int] = set()
         self.key_types: dict[int, dict[str, str]] = {}
         self.zarr_keys: dict[int, dict[str, str]] = {}
@@ -886,6 +890,9 @@ class MultiDataset(torch.utils.data.Dataset):
                     logger.warning(prefix)
                 return prefix
 
+            if not self.check_bounds:
+                continue
+
             below = arr < q_low
             above = arr > q_high
             if torch.any(below) or torch.any(above):
@@ -949,7 +956,7 @@ class MultiDataset(torch.utils.data.Dataset):
             idx=idx,
             candidates=global_candidates,
             _attempts=attempts,
-            max_attempts=len(global_candidates),
+            max_attempts=min(10, len(global_candidates)),
             exhausted_error=(
                 f"Entire dataset bad (no valid indices): dataset={dataset_name}"
             ),
@@ -1662,7 +1669,7 @@ class ZarrDataset(torch.utils.data.Dataset):
                 idx=idx,
                 candidates=range(self.total_frames),
                 _attempts=attempts,
-                max_attempts=self.total_frames,
+                max_attempts=min(10, self.total_frames),
                 exhausted_error=(
                     f"Entire episode bad (no valid indices): ep={Path(self.episode_path).name}"
                 ),

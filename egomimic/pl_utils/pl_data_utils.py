@@ -13,6 +13,18 @@ from transformers import AutoTokenizer
 logger = logging.getLogger(__name__)
 
 
+def _worker_init_fn(worker_id):
+    # Re-initialize Blosc after fork to kill zombie threads inherited from the
+    # main process. Those threads cause simplejpeg/zarr decompression to
+    # deadlock silently, producing the GPU-0-idle DDP hang seen around epoch 35.
+    try:
+        import numcodecs.blosc as blosc
+        blosc.use_threads = False
+        blosc.set_nthreads(1)
+    except Exception:
+        pass
+
+
 class RLDBModule(LightningDataModule):
     """
     Deprecated and is not supported by trainHydra.py
@@ -97,6 +109,9 @@ class MultiDataModuleWrapper(LightningDataModule):
                 dataset,
                 shuffle=True,
                 collate_fn=self.collate_fn,
+                worker_init_fn=_worker_init_fn,
+                persistent_workers=dataset_params.get("num_workers", 0) > 0,
+                timeout=120,
                 **dataset_params,
             )
 
@@ -116,6 +131,9 @@ class MultiDataModuleWrapper(LightningDataModule):
                 dataset,
                 shuffle=shuffle,
                 collate_fn=self.collate_fn,
+                worker_init_fn=_worker_init_fn,
+                persistent_workers=dataset_params.get("num_workers", 0) > 0,
+                timeout=120,
                 **dataset_params,
             )
 

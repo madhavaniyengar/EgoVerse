@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+/data/custom_franka_zarr/#!/usr/bin/env bash
 set -euo pipefail
 
 # ====== config (edit these) ======

@@ -6,6 +6,19 @@ model_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
   dirpath: ${paths.output_dir}/checkpoints
   filename: "epoch_{epoch}"
-  save_last: true
+  save_last: false
   save_top_k: -1
   every_n_epochs: 100
+  save_on_train_epoch_end: true
+
+# Writes last.ckpt every epoch so a crash never loses more than one epoch.
+# PL 2.6+ only updates last.ckpt when a topk checkpoint fires, so this
+# needs to be a separate callback with every_n_epochs: 1.
+last_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.output_dir}/checkpoints
+  filename: "last"
+  save_top_k: 1
+  every_n_epochs: 1
+  save_on_train_epoch_end: true
+  enable_version_counter: false

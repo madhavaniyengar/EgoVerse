@@ -214,6 +214,8 @@ def _matrix_to_xyz(mats: np.ndarray) -> np.ndarray:
 def _split_action_pose(actions):
     # 14D layout: [L xyz ypr g, R xyz ypr g]
     # 12D layout: [L xyz ypr, R xyz ypr]
+    # 7D layout:  [R xyz ypr g] (single right arm)
+    # 6D layout:  [R xyz ypr]   (single right arm, no gripper)
     if actions.shape[-1] == 14:
         left_xyz = actions[..., :3]
         left_ypr = actions[..., 3:6]
@@ -224,6 +226,11 @@ def _split_action_pose(actions):
         left_ypr = actions[..., 3:6]
         right_xyz = actions[..., 6:9]
         right_ypr = actions[..., 9:12]
+    elif actions.shape[-1] in (6, 7):
+        left_xyz = np.zeros((*actions.shape[:-1], 3), dtype=actions.dtype)
+        left_ypr = np.zeros((*actions.shape[:-1], 3), dtype=actions.dtype)
+        right_xyz = actions[..., :3]
+        right_ypr = actions[..., 3:6]
     else:
         raise ValueError(f"Unsupported action dim {actions.shape[-1]}")
     return left_xyz, left_ypr, right_xyz, right_ypr

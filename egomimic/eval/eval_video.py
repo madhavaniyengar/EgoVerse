@@ -66,6 +66,14 @@ class EvalVideo(Eval):
             )
 
     def on_validation_end(self):
+        # Non-zero ranks only clear their buffers; file I/O is rank-0 only.
+        # All ranks must arrive at the barrier in pl_model.on_validation_end
+        # before proceeding, so we must not let rank >0 stay in a slow write.
+        if not self.trainer.is_global_zero:
+            self.val_image_buffer = {}
+            self.val_counter = {}
+            return
+
         for key, buffer in self.val_image_buffer.items():
             os.makedirs(
                 os.path.join(

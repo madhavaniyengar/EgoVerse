@@ -26,3 +26,17 @@ scale_bimanual:
   action_key: actions_cartesian
   annotation_key: sampled_prompt
   mode: traj
+custom_human_right_arm:
+  _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.viz_gt_preds
+  _partial_: true
+  image_key: observations.images.front_img_1
+  action_key: actions_cartesian
+  annotation_key: sampled_prompt
+  mode: traj
+franka_right_arm:
+  _target_: egomimic.rldb.embodiment.custom.Franka.viz_gt_preds
+  _partial_: true
+  image_key: observations.images.front_img_1
+  action_key: actions_cartesian
+  annotation_key: null
+  mode: traj

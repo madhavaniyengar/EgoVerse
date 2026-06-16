@@ -1,0 +1,10 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_bc_flow_franka_2cam
+  - override data: custom_franka_2cam
+  - _self_
+
+name: custom_franka_2cam
+description: hpt_bc_flow_franka_2cam
+
+reject_outliers: false
