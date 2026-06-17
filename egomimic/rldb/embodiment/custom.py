@@ -137,6 +137,19 @@ def _build_single_arm_human_cartesian_transform_list(
     ]
 
 
+class FrankaWrist(Franka):
+    """Franka Panda adapter with an additional wrist camera."""
+
+    @classmethod
+    def _get_keymap(cls, keymap_mode: Literal["cartesian"] = "cartesian"):
+        keymap = super()._get_keymap(keymap_mode)
+        keymap["observations.images.wrist_img"] = {
+            "key_type": "camera_keys",
+            "zarr_key": "images.wrist",
+        }
+        return keymap
+
+
 def _build_franka_right_arm_cartesian_transform_list(
     *,
     right_cmd_world: str = "right.cmd_ee_pose",

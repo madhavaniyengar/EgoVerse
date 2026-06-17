@@ -1,0 +1,8 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_cotrain_custom_human_franka
+  - override data: cotrain_swapobjects_human_franka
+  - _self_
+
+name: swapobjects_human_franka_cotrain
+description: hpt_flow_cotrain_swapobjects
