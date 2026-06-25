@@ -65,6 +65,18 @@ IDENTITY_INTRINSICS = np.array(
     dtype=np.float64,
 )
 
+# Azure Kinect front camera (cam0) — franka_2cam_zed setup
+FRANKA_ZED_FRONT_INTRINSICS = np.array(
+    [[609.097, 0.0, 639.615, 0], [0.0, 608.889, 365.639, 0], [0.0, 0.0, 1.0, 0]],
+    dtype=np.float64,
+)
+
+# Azure Kinect left camera (cam1)
+FRANKA_ZED_LEFT_INTRINSICS = np.array(
+    [[604.321, 0.0, 637.408, 0], [0.0, 604.109, 363.023, 0], [0.0, 0.0, 1.0, 0]],
+    dtype=np.float64,
+)
+
 # Cam to base extrinsics
 EXTRINSICS = {
     "ariaJul29": {
@@ -257,6 +269,29 @@ EXTRINSICS = {
         "left": np.eye(4),
         "right": np.eye(4),
     },
+    # franka_2cam_zed calibration: cam0=front (right arm primary), cam1=left
+    "franka_zed_front": {
+        "right": np.array(
+            [
+                [3.17855e-03, 7.66044e-01, -6.42780e-01, 9.53837e-01],
+                [9.99964e-01, 2.59828e-03, 8.04137e-03, -1.76884e-01],
+                [7.83017e-03, -6.42783e-01, -7.66009e-01, 5.32154e-01],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        ),
+        "left": np.eye(4),
+    },
+    "franka_zed_left": {
+        "right": np.array(
+            [
+                [9.88648e-01, -9.61655e-02, -1.15446e-01, 4.91876e-01],
+                [-9.91006e-03, -8.08411e-01, 5.88535e-01, -6.44682e-01],
+                [-1.49924e-01, -5.80709e-01, -8.00187e-01, 5.60722e-01],
+                [0.0, 0.0, 0.0, 1.0],
+            ]
+        ),
+        "left": np.eye(4),
+    },
 }
 
 INTRINSICS = {
@@ -265,6 +300,8 @@ INTRINSICS = {
     "mecka": MECKA_INTRINSICS,
     "scale": SCALE_INTRINSICS,
     "identity": IDENTITY_INTRINSICS,
+    "franka_zed_front": FRANKA_ZED_FRONT_INTRINSICS,
+    "franka_zed_left": FRANKA_ZED_LEFT_INTRINSICS,
 }
 
 ARIA_T_RGB_CPF = np.array(

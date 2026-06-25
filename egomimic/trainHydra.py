@@ -1,4 +1,5 @@
 import copy
+import json
 import os
 import signal
 from typing import Any, Dict, List, Optional, Tuple
@@ -143,7 +144,9 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     # Wire each training/valid MultiDataset to the stats-only ``norm_stats``
     # by reference. Bounds-check + normalize run at the MultiDataset level in
     # ``__getitem__`` — not as per-leaf transforms — which avoids the shared
-    # transform_list aliasing trap.
+    # transform_list aliasing trap. Quantile rejection remains configurable;
+    # non-finite values are always rejected.
+    norm_stats.check_bounds = bool(cfg.get("reject_outliers", True))
     for ds in datamodule.train_datasets.values():
         ds.set_norm_stats_from(norm_stats)
     for ds in datamodule.valid_datasets.values():
@@ -254,7 +257,26 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
                 model.load_state_dict(checkpoint["state_dict"], strict=False)
                 log.info(f"Loaded weights from {ckpt_path}")
             log.info("Starting evaluation!")
-            trainer.validate(model=model, datamodule=datamodule)
+            validation_results = trainer.validate(model=model, datamodule=datamodule)
+            if trainer.is_global_zero:
+                metrics = validation_results[0] if validation_results else {}
+                if hasattr(eval_obj, "aggregated_metrics"):
+                    metrics = {**metrics, **eval_obj.aggregated_metrics}
+                serializable_metrics = {
+                    key: (
+                        float(value.detach().cpu().item())
+                        if torch.is_tensor(value)
+                        else float(value)
+                    )
+                    for key, value in metrics.items()
+                }
+                metrics_path = os.path.join(
+                    trainer.default_root_dir, "validation_metrics.json"
+                )
+                with open(metrics_path, "w") as f:
+                    json.dump(serializable_metrics, f, indent=2, sort_keys=True)
+                log.info(f"Validation metrics: {serializable_metrics}")
+                log.info(f"Saved validation metrics to {metrics_path}")
     else:
         raise ValueError(f"Invalid mode: {mode}")
 

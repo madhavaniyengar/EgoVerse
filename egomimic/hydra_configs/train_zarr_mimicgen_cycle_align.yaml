@@ -1,0 +1,7 @@
+defaults:
+  - train_zarr_mimicgen_cotrain
+  - override model: hpt_cotrain_mimicgen_cycle_align
+  - _self_
+
+name: mimicgen_cotrain
+description: hpt_cotrain_mimicgen_cycle_align

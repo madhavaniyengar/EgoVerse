@@ -20,17 +20,22 @@ class EvalVideo(Eval):
         limit_val_batches: int = 400,
         viz_func: dict = None,
         transform_lists: dict | None = None,
+        write_videos: bool = True,
     ):
         super().__init__()
         self.trainer = None
         self.model = None
         self.viz_func = viz_func
+        self.write_videos = write_videos
         # Per-embodiment list[Transform] applied once during eval to project
         # the model's wrist-frame actions back into cam (head) frame. Reused for
         # both cam-frame MSE and the viz video so we don't transform twice.
         self.transform_lists = transform_lists or {}
         self.val_image_buffer = {}
         self.val_counter = {}
+        self.metric_sums = {}
+        self.metric_counts = {}
+        self.aggregated_metrics = {}
         self.override_dict = {
             "strategy": "ddp_find_unused_parameters_true",
             "limit_train_batches": 0,
@@ -59,6 +64,11 @@ class EvalVideo(Eval):
         raise NotImplementedError
 
     def on_validation_start(self):
+        self.metric_sums = {}
+        self.metric_counts = {}
+        self.aggregated_metrics = {}
+        if not self.write_videos:
+            return
         if self.trainer.is_global_zero:
             os.makedirs(
                 os.path.join(self.video_dir(), f"epoch_{self.trainer.current_epoch}"),
@@ -66,6 +76,15 @@ class EvalVideo(Eval):
             )
 
     def on_validation_end(self):
+        self.aggregated_metrics = {
+            key: self.metric_sums[key] / self.metric_counts[key]
+            for key in self.metric_sums
+            if self.metric_counts[key] > 0
+        }
+        if not self.write_videos:
+            self.val_image_buffer = {}
+            self.val_counter = {}
+            return
         # Non-zero ranks only clear their buffers; file I/O is rank-0 only.
         # All ranks must arrive at the barrier in pl_model.on_validation_end
         # before proceeding, so we must not let rank >0 stay in a slow write.
@@ -104,6 +123,13 @@ class EvalVideo(Eval):
             k: (v.to(device) if torch.is_tensor(v) else torch.tensor(v, device=device))
             for k, v in metrics.items()
         }
+        for key, value in metrics.items():
+            scalar = float(value.detach().cpu().item())
+            self.metric_sums[key] = self.metric_sums.get(key, 0.0) + scalar
+            self.metric_counts[key] = self.metric_counts.get(key, 0) + 1
+
+        if not self.write_videos:
+            return
 
         ## images is now a dict
         for key, images in images_dict.items():

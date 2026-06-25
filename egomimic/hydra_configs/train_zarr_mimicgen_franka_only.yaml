@@ -1,0 +1,16 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_bc_mimicgen_franka
+  - override data: mimicgen_franka_only
+  - _self_
+
+name: mimicgen_franka_only
+description: hpt_bc_mimicgen_franka_baseline
+
+reject_outliers: false
+
+hydra:
+  run:
+    dir: ${paths.log_dir}/${name}/${description}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${paths.log_dir}/${name}/${description}_${now:%Y-%m-%d_%H-%M-%S}

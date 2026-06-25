@@ -821,8 +821,8 @@ class MultiDataset(torch.utils.data.Dataset):
 
     def set_norm_stats_from(self, source: "MultiDataset") -> None:
         """Share stats with this dataset (and its nested MultiDatasets) by
-        reference. After this call ``__getitem__`` will bounds-check + normalize
-        each sample using ``source``'s ``norm_stats``/``key_types``/``zarr_keys``.
+        reference. After this call ``__getitem__`` will normalize each sample
+        using ``source``'s stats and, when enabled on ``source``, bounds-check it.
 
         Use this *instead of* ``attach_normalize_transforms`` — it doesn't mutate
         any leaf-level ``transform`` list, so it can't accumulate duplicate
@@ -834,6 +834,7 @@ class MultiDataset(torch.utils.data.Dataset):
         self.shapes = source.shapes
         self.embodiments = source.embodiments
         self.norm_mode = source.norm_mode
+        self.check_bounds = source.check_bounds
         # Each MultiDataset keeps its own warning-dedup state.
         self._warned_violations = set()
         for ds in self.datasets.values():
@@ -1367,10 +1368,10 @@ class MultiDataset(torch.utils.data.Dataset):
 
         Kept as a thin shim that calls ``set_norm_stats_from(self)`` on each
         MultiDataset in ``datasets`` so existing callers keep working. The
-        ``reject_outliers`` flag is no longer honored — bounds checking is
-        always on when stats are populated. To disable, clear ``norm_stats``.
+        ``reject_outliers`` controls quantile bounds checking. NaN/Inf samples
+        are still rejected regardless of this flag.
         """
-        del reject_outliers  # unused
+        self.check_bounds = reject_outliers
         graph = datasets if datasets is not None else self.datasets
         for ds in graph.values():
             if isinstance(ds, MultiDataset):
@@ -1730,7 +1731,9 @@ class ZarrDataset(torch.utils.data.Dataset):
 
             data["embodiment"] = get_embodiment_id(self.embodiment)
             ep_name = Path(self.episode_path).name
-            data["episode_hash"] = ep_name[:-5] if ep_name.endswith(".zarr") else ep_name
+            data["episode_hash"] = (
+                ep_name[:-5] if ep_name.endswith(".zarr") else ep_name
+            )
             _ = origin  # preserved for symmetry with prior API
             return data
 

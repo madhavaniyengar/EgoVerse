@@ -8,10 +8,10 @@ import einops
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from geomloss import SamplesLoss
 from overrides import override
 from termcolor import cprint
-from tslearn.metrics import SoftDTWLossPyTorch
 
 from egomimic.algo.algo import Algo
 from egomimic.models.hpt_nets import MultiheadAttention, SimpleTransformer
@@ -22,6 +22,150 @@ from egomimic.utils.egomimicUtils import (
     download_from_huggingface,
     get_sinusoid_encoding_table,
 )
+
+
+def _cfg_get(cfg, key, default=None):
+    if cfg is None:
+        return default
+    if hasattr(cfg, "get"):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
+
+
+class CycleRepresentationAligner(nn.Module):
+    """Bidirectional residual maps for cross-embodiment representation alignment."""
+
+    def __init__(
+        self,
+        embed_dim: int,
+        hidden_dim: int | None = None,
+        residual: bool = True,
+        zero_init_last: bool = True,
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.hidden_dim = hidden_dim or embed_dim * 2
+        self.residual = residual
+        self.maps = nn.ModuleDict()
+        self.zero_init_last = zero_init_last
+
+    @staticmethod
+    def _key(src_domain: str, dst_domain: str) -> str:
+        return f"{src_domain}__to__{dst_domain}"
+
+    def add_pair(self, domain_a: str, domain_b: str):
+        for src, dst in ((domain_a, domain_b), (domain_b, domain_a)):
+            key = self._key(src, dst)
+            if key in self.maps:
+                continue
+            mlp = nn.Sequential(
+                nn.LayerNorm(self.embed_dim),
+                nn.Linear(self.embed_dim, self.hidden_dim),
+                nn.GELU(),
+                nn.Linear(self.hidden_dim, self.embed_dim),
+            )
+            if self.zero_init_last:
+                nn.init.zeros_(mlp[-1].weight)
+                nn.init.zeros_(mlp[-1].bias)
+            self.maps[key] = mlp
+
+    def map(self, src_domain: str, dst_domain: str, x: torch.Tensor) -> torch.Tensor:
+        delta = self.maps[self._key(src_domain, dst_domain)](x)
+        if self.residual:
+            return x + delta
+        return delta
+
+    @staticmethod
+    def _pairwise_token_mse(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        return ((x.unsqueeze(1) - y.detach().unsqueeze(0)) ** 2).mean(dim=(2, 3))
+
+    @staticmethod
+    def _row_soft_nn_weights(
+        proxy_src: torch.Tensor,
+        proxy_dst: torch.Tensor,
+        *,
+        temperature: float,
+        topk: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        proxy_src = F.normalize(proxy_src.float(), dim=-1)
+        proxy_dst = F.normalize(proxy_dst.float(), dim=-1)
+        dist = torch.cdist(proxy_src, proxy_dst, p=2)
+        if topk > 0 and topk < dist.shape[1]:
+            _, idx = torch.topk(dist, k=topk, largest=False, dim=1)
+            mask = torch.zeros_like(dist, dtype=torch.bool)
+            mask.scatter_(1, idx, True)
+            logits = torch.full_like(dist, -torch.finfo(dist.dtype).max)
+            logits[mask] = -dist[mask] / temperature
+        else:
+            logits = -dist / temperature
+        return torch.softmax(logits, dim=1), dist
+
+    @staticmethod
+    def _variance_penalty(z: torch.Tensor, min_std: float) -> torch.Tensor:
+        z = z.reshape(z.shape[0], -1)
+        std = torch.sqrt(z.var(dim=0, unbiased=False) + 1e-4)
+        return F.relu(min_std - std).mean()
+
+    def compute_loss(
+        self,
+        domain_a: str,
+        repr_a: torch.Tensor,
+        proxy_a: torch.Tensor,
+        domain_b: str,
+        repr_b: torch.Tensor,
+        proxy_b: torch.Tensor,
+        cfg,
+    ) -> OrderedDict:
+        temperature = float(_cfg_get(cfg, "match_temperature", 0.2))
+        topk = int(_cfg_get(cfg, "match_topk", 16))
+        cycle_weight = float(_cfg_get(cfg, "cycle_weight", 1.0))
+        match_weight = float(_cfg_get(cfg, "match_weight", 1.0))
+        variance_weight = float(_cfg_get(cfg, "variance_weight", 0.05))
+        min_std = float(_cfg_get(cfg, "variance_min_std", 0.05))
+
+        self.add_pair(domain_a, domain_b)
+
+        a_to_b = self.map(domain_a, domain_b, repr_a)
+        b_to_a = self.map(domain_b, domain_a, repr_b)
+        a_cycle = self.map(domain_b, domain_a, a_to_b)
+        b_cycle = self.map(domain_a, domain_b, b_to_a)
+
+        cycle_loss = 0.5 * (
+            F.mse_loss(a_cycle, repr_a.detach()) + F.mse_loss(b_cycle, repr_b.detach())
+        )
+
+        weights_ab, dist_ab = self._row_soft_nn_weights(
+            proxy_a, proxy_b, temperature=temperature, topk=topk
+        )
+        weights_ba, dist_ba = self._row_soft_nn_weights(
+            proxy_b, proxy_a, temperature=temperature, topk=topk
+        )
+        match_loss = 0.5 * (
+            (weights_ab * self._pairwise_token_mse(a_to_b, repr_b)).sum(dim=1).mean()
+            + (weights_ba * self._pairwise_token_mse(b_to_a, repr_a)).sum(dim=1).mean()
+        )
+
+        variance_loss = 0.5 * (
+            self._variance_penalty(a_to_b, min_std)
+            + self._variance_penalty(b_to_a, min_std)
+        )
+        avg_proxy_distance = 0.5 * (
+            (weights_ab * dist_ab).sum(dim=1).mean()
+            + (weights_ba * dist_ba).sum(dim=1).mean()
+        )
+
+        total = (
+            cycle_weight * cycle_loss
+            + match_weight * match_loss
+            + variance_weight * variance_loss
+        )
+        return OrderedDict(
+            rep_alignment_loss=total,
+            rep_alignment_cycle_loss=cycle_loss,
+            rep_alignment_match_loss=match_loss,
+            rep_alignment_variance_loss=variance_loss,
+            rep_alignment_avg_proxy_distance=avg_proxy_distance,
+        )
 
 
 class HPTModel(nn.Module):
@@ -119,6 +263,7 @@ class HPTModel(nn.Module):
         self.lambd = None
 
         self.diffusion = None
+        self.representation_aligner = None
 
     def init_encoder(self, modality, encoder_spec):
         """
@@ -491,6 +636,11 @@ class HPTModel(nn.Module):
         return proc_tokens, block_outputs
 
     def init_dtw(self):
+        # Import lazily: tslearn's native dependency stack can conflict with
+        # timm/torchvision during module import on Linux ARM64. DTW is an
+        # optional OT-only feature and most HPT policies do not use it.
+        from tslearn.metrics import SoftDTWLossPyTorch
+
         self.dtw = SoftDTWLossPyTorch(gamma=0.1)
         self.use_dtw = True
 
@@ -912,6 +1062,17 @@ class HPT(Algo):
 
         self.rkl_samples = kwargs.get("reverse_kl_samples", 4)
 
+        self.representation_alignment = kwargs.get("representation_alignment", None)
+        self.rep_align_enabled = bool(
+            _cfg_get(self.representation_alignment, "enabled", False)
+        )
+        self.rep_align_weight = float(
+            _cfg_get(self.representation_alignment, "weight", 1.0)
+        )
+        self.rep_align_warm_start_steps = int(
+            _cfg_get(self.representation_alignment, "warm_start_steps", 0)
+        )
+
         if self.ot:
             self.ot_warm_start_steps = kwargs.get("ot_warm_start_steps", 0)
             self.ot_6dof = kwargs.get("ot_6dof", False)
@@ -950,6 +1111,30 @@ class HPT(Algo):
                     self.lang_keys[embodiment_id].append(key)
 
         model.finalize_modules()
+
+        if self.rep_align_enabled:
+            aligner_hidden_dim = int(
+                _cfg_get(
+                    self.representation_alignment,
+                    "hidden_dim",
+                    model.embed_dim * 2,
+                )
+            )
+            model.representation_aligner = CycleRepresentationAligner(
+                embed_dim=model.embed_dim,
+                hidden_dim=aligner_hidden_dim,
+                residual=bool(
+                    _cfg_get(self.representation_alignment, "residual", True)
+                ),
+                zero_init_last=bool(
+                    _cfg_get(self.representation_alignment, "zero_init_last", True)
+                ),
+            )
+            if len(self.domains) != 2:
+                raise ValueError(
+                    "representation_alignment currently expects exactly two domains"
+                )
+            model.representation_aligner.add_pair(self.domains[0], self.domains[1])
 
         self.nets["policy"] = model
         self.nets = self.nets.float().to(self.device)
@@ -1083,6 +1268,14 @@ class HPT(Algo):
             predictions["ot_loss"] = ot_loss
             predictions["avg_feature_distance"] = avg_feat_distance
 
+        if self.rep_align_enabled:
+            alignment_losses = self._forward_representation_alignment(
+                hpt_batches,
+                get_embodiment_id(self.domains[0]),
+                get_embodiment_id(self.domains[1]),
+            )
+            predictions.update(alignment_losses)
+
         return predictions
 
     @override
@@ -1187,6 +1380,22 @@ class HPT(Algo):
             loss_dict["avg_feature_distance"] = predictions["avg_feature_distance"]
             total_action_loss += ot_weight * self.temperature * predictions["ot_loss"]
 
+        if self.rep_align_enabled:
+            rep_align_weight = (
+                self.rep_align_weight
+                if self.training_step >= self.rep_align_warm_start_steps
+                else 0.0
+            )
+            for key in (
+                "rep_alignment_loss",
+                "rep_alignment_cycle_loss",
+                "rep_alignment_match_loss",
+                "rep_alignment_variance_loss",
+                "rep_alignment_avg_proxy_distance",
+            ):
+                loss_dict[key] = predictions[key]
+            total_action_loss += rep_align_weight * predictions["rep_alignment_loss"]
+
         loss_dict["action_loss"] = total_action_loss / len(self.domains)
         return loss_dict
 
@@ -1216,6 +1425,63 @@ class HPT(Algo):
             hpt_batch_1,
             hpt_batch_2,
             supervised=self.supervised,
+        )
+
+    def _alignment_proxy(self, hpt_batch, peer_hpt_batch=None):
+        cfg = self.representation_alignment
+        mode = _cfg_get(cfg, "proxy_mode", "state")
+        data = hpt_batch["data"]
+        if mode == "state":
+            proxy = data["state_ee_pose"].reshape(data["state_ee_pose"].shape[0], -1)
+        elif mode == "state_action_if_same_dim":
+            state = data["state_ee_pose"].reshape(data["state_ee_pose"].shape[0], -1)
+            peer_action = (
+                peer_hpt_batch["data"]["action"] if peer_hpt_batch is not None else None
+            )
+            if (
+                peer_action is not None
+                and data["action"].shape[-1] == peer_action.shape[-1]
+            ):
+                action = data["action"]
+                action_summary = torch.cat(
+                    [action.mean(dim=1), action.std(dim=1, unbiased=False)], dim=-1
+                )
+                proxy = torch.cat([state, action_summary], dim=-1)
+            else:
+                proxy = state
+        else:
+            raise ValueError(f"Unknown representation alignment proxy_mode: {mode}")
+
+        proxy_dims = _cfg_get(cfg, "proxy_dims", None)
+        if proxy_dims is not None:
+            proxy = proxy[..., : int(proxy_dims)]
+        return proxy
+
+    def _forward_representation_alignment(self, batch, embodiment1_id, embodiment2_id):
+        hpt_batch_1 = self._clone_batch(batch[embodiment1_id])
+        hpt_batch_2 = self._clone_batch(batch[embodiment2_id])
+
+        proxy_1 = self._alignment_proxy(hpt_batch_1, hpt_batch_2)
+        proxy_2 = self._alignment_proxy(hpt_batch_2, hpt_batch_1)
+        min_proxy_dim = min(proxy_1.shape[-1], proxy_2.shape[-1])
+        proxy_1 = proxy_1[..., :min_proxy_dim]
+        proxy_2 = proxy_2[..., :min_proxy_dim]
+
+        policy = self.nets["policy"]
+        features_1, _ = policy.forward_features(
+            hpt_batch_1["domain"], hpt_batch_1["data"]
+        )
+        features_2, _ = policy.forward_features(
+            hpt_batch_2["domain"], hpt_batch_2["data"]
+        )
+        return policy.representation_aligner.compute_loss(
+            hpt_batch_1["domain"],
+            features_1,
+            proxy_1,
+            hpt_batch_2["domain"],
+            features_2,
+            proxy_2,
+            self.representation_alignment,
         )
 
     def _robomimic_to_hpt_data(

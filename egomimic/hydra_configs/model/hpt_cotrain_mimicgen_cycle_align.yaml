@@ -1,0 +1,20 @@
+defaults:
+  - hpt_cotrain_mimicgen
+  - _self_
+
+robomimic_model:
+  representation_alignment:
+    enabled: true
+    weight: 0.05
+    warm_start_steps: 1000
+    hidden_dim: 512
+    residual: true
+    zero_init_last: true
+    cycle_weight: 1.0
+    match_weight: 1.0
+    variance_weight: 0.05
+    variance_min_std: 0.05
+    match_temperature: 0.2
+    match_topk: 32
+    proxy_mode: state
+    proxy_dims: 6
