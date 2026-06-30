@@ -1,0 +1,47 @@
+defaults:
+  - hpt_cotrain_custom_human_franka
+  - _self_
+
+# front_img_1 and front_img_2 are shared across human and Franka. The wrist
+# modality is robot-only, while the transformer trunk remains common.
+robomimic_model:
+  shared_obs_keys: [front_img_1, front_img_2]
+
+  shared_stem_specs:
+    front_img_2:
+      _target_: egomimic.models.hpt_nets.MLPPolicyStem
+      input_dim: 256
+      output_dim: 256
+      widths: [256]
+      specs:
+        random_horizon_masking: false
+        cross_attn:
+          crossattn_latent: 16
+          crossattn_heads: 8
+          crossattn_dim_head: 64
+          crossattn_modality_dropout: 0.1
+          modality_embed_dim: 256
+
+  stem_specs:
+    franka_right_arm:
+      wrist_img:
+        _target_: egomimic.models.hpt_nets.MLPPolicyStem
+        input_dim: 256
+        output_dim: 256
+        widths: [256]
+        specs:
+          random_horizon_masking: false
+          cross_attn:
+            crossattn_latent: 16
+            crossattn_heads: 8
+            crossattn_dim_head: 64
+            crossattn_modality_dropout: 0.1
+            modality_embed_dim: 256
+
+  encoder_specs:
+    front_img_2:
+      _target_: egomimic.models.hpt_nets.ResNet
+      output_dim: 256
+    wrist_img:
+      _target_: egomimic.models.hpt_nets.ResNet
+      output_dim: 256

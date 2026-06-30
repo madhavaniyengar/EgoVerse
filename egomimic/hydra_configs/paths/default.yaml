@@ -10,6 +10,12 @@ dataset_dir: /coc/flash7/scratch/egoverseS3ZarrDataset
 # local folders containing custom converted Zarr episode datasets
 custom_human_dataset_dir: ./data/custom_human_azure_kinect_zarr
 custom_franka_dataset_dir: ./data/custom_franka_zarr
+ppp_human_dataset_dir: /scratch/madhavai/egoverse/data/ppp_human/egoverse_custom_human_2cam_zarr
+ppp_franka_dataset_dir: /scratch/madhavai/egoverse/data/ppp/egoverse_custom_franka_3cam_zarr
+
+# MimicGen paired pick-place dataset directories
+mimicgen_franka_dataset_dir: /project_data/held/madhavai/egoverse/mimicgen_pickplace_franka_zarr
+mimicgen_sawyer_dataset_dir: /project_data/held/madhavai/egoverse/mimicgen_pickplace_sawyer_zarr
 
 # path to logging directory
 log_dir: ${paths.root_dir}/logs/

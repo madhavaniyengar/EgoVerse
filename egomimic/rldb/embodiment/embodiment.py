@@ -33,6 +33,7 @@ class EMBODIMENT(Enum):
     SCALE_LEFT_ARM = 14
     CUSTOM_HUMAN_RIGHT_ARM = 15
     FRANKA_RIGHT_ARM = 16
+    SAWYER_AS_HUMAN = 17
 
 
 EMBODIMENT_ID_TO_KEY = {member.value: member.name for member in EMBODIMENT}

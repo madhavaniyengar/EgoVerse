@@ -32,6 +32,7 @@ from egomimic.rldb.zarr.zarr_writer import ZarrWriter
 LOGGER = logging.getLogger(__name__)
 FRONT_COLOR_KEY = "observation.images.cam_azure_kinect_front.color"
 LEFT_COLOR_KEY = "observation.images.cam_azure_kinect_left.color"
+WRIST_COLOR_KEY = "observation.images.cam_wrist"
 MANO_CANONICAL_ORDER = (
     "0=wrist,1-4=thumb,5-8=index,9-12=middle,13-16=ring,17-20=pinky"
 )
@@ -82,23 +83,60 @@ def _video_path(
     return root / rel
 
 
-def _read_rgb_video(path: Path, expected_frames: int | None = None) -> np.ndarray:
+def _read_rgb_video(
+    path: Path,
+    expected_frames: int | None = None,
+    *,
+    temporal_stride: int = 1,
+    spatial_scale_factor: int = 1,
+    center_crop_size: int | None = None,
+) -> np.ndarray:
+    if temporal_stride < 1:
+        raise ValueError(f"temporal_stride must be >= 1, got {temporal_stride}")
+    if spatial_scale_factor < 1:
+        raise ValueError(
+            f"spatial_scale_factor must be >= 1, got {spatial_scale_factor}"
+        )
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError(f"Could not open video: {path}")
     frames = []
+    source_frame_count = 0
     while True:
         ok, frame_bgr = cap.read()
         if not ok:
             break
-        frames.append(cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB))
+        if source_frame_count % temporal_stride == 0:
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            if spatial_scale_factor != 1:
+                height, width = frame_rgb.shape[:2]
+                frame_rgb = cv2.resize(
+                    frame_rgb,
+                    (width // spatial_scale_factor, height // spatial_scale_factor),
+                    interpolation=cv2.INTER_AREA,
+                )
+            if center_crop_size is not None:
+                height, width = frame_rgb.shape[:2]
+                if center_crop_size > min(height, width):
+                    raise ValueError(
+                        f"center_crop_size={center_crop_size} does not fit frame "
+                        f"shape {frame_rgb.shape} from {path}"
+                    )
+                top = (height - center_crop_size) // 2
+                left = (width - center_crop_size) // 2
+                frame_rgb = frame_rgb[
+                    top : top + center_crop_size,
+                    left : left + center_crop_size,
+                ]
+            frames.append(frame_rgb)
+        source_frame_count += 1
     cap.release()
     if not frames:
         raise RuntimeError(f"Video had no readable frames: {path}")
     arr = np.stack(frames, axis=0)
-    if expected_frames is not None and len(arr) != expected_frames:
+    if expected_frames is not None and source_frame_count != expected_frames:
         raise ValueError(
-            f"{path} has {len(arr)} frames but parquet has {expected_frames}"
+            f"{path} has {source_frame_count} frames but parquet has {expected_frames}"
         )
     return arr
 
@@ -268,6 +306,7 @@ def convert_robot_dataset(
     overwrite: bool = False,
     video_key: str = FRONT_COLOR_KEY,
     second_video_key: str = LEFT_COLOR_KEY,
+    wrist_video_key: str = WRIST_COLOR_KEY,
 ) -> list[Path]:
     info = json.loads((root / "meta/info.json").read_text())
     episodes = _read_jsonl(root / "meta/episodes.jsonl")
@@ -284,6 +323,8 @@ def convert_robot_dataset(
         )
         second_video_path = _video_path(root, info, episode_index, second_video_key)
         images_2 = _read_rgb_video(second_video_path, expected_frames=len(df)) if second_video_path.exists() else None
+        wrist_video_path = _video_path(root, info, episode_index, wrist_video_key)
+        images_wrist = _read_rgb_video(wrist_video_path, expected_frames=len(df)) if wrist_video_path.exists() else None
 
         obs_pose, obs_gripper = _eef10_to_pose_gripper(
             _stack_array_column(df, "observation.right_eef_pose")
@@ -301,6 +342,8 @@ def convert_robot_dataset(
         image_data = {"images.front_1": images}
         if images_2 is not None:
             image_data["images.front_2"] = images_2
+        if images_wrist is not None:
+            image_data["images.wrist"] = images_wrist
 
         ZarrWriter.create_and_write(
             episode_path=ep_path,
@@ -321,6 +364,7 @@ def convert_robot_dataset(
                 "source_episode_index": episode_index,
                 "source_video_key": video_key,
                 "source_second_video_key": second_video_key,
+                "source_wrist_video_key": wrist_video_key,
             },
         )
         LOGGER.info("Wrote %s", ep_path)
@@ -335,9 +379,13 @@ def convert_human_dataset(
     *,
     overwrite: bool = False,
     video_key: str = FRONT_COLOR_KEY,
+    second_video_key: str | None = LEFT_COLOR_KEY,
     keypoint_scale: float = 1.0,
     keypoint_suffix: str = ".mp4.keypoints3d.npy",
     pose_from: str = "mecka_right_hand",
+    temporal_stride: int = 1,
+    spatial_scale_factor: int = 1,
+    center_crop_size: int | None = None,
 ) -> list[Path]:
     info = json.loads((root / "meta/info.json").read_text())
     episodes = _read_jsonl(root / "meta/episodes.jsonl")
@@ -351,9 +399,42 @@ def convert_human_dataset(
         images = _read_rgb_video(
             _video_path(root, info, episode_index, video_key),
             expected_frames=len(df),
+            temporal_stride=temporal_stride,
+            spatial_scale_factor=spatial_scale_factor,
+            center_crop_size=center_crop_size,
         )
+        images_2 = None
+        if second_video_key is not None:
+            second_video_path = _video_path(
+                root, info, episode_index, second_video_key
+            )
+            if not second_video_path.exists():
+                raise FileNotFoundError(
+                    f"Second human camera video does not exist: {second_video_path}"
+                )
+            images_2 = _read_rgb_video(
+                second_video_path,
+                expected_frames=len(df),
+                temporal_stride=temporal_stride,
+                spatial_scale_factor=spatial_scale_factor,
+                center_crop_size=center_crop_size,
+            )
         keypoint_path = keypoint_dir / f"episode_{episode_index:06d}{keypoint_suffix}"
-        source_keypoints = _load_mano_keypoints(keypoint_path, len(df), keypoint_scale)
+        all_source_keypoints = _load_mano_keypoints(
+            keypoint_path, len(df), keypoint_scale
+        )
+        source_keypoints = all_source_keypoints[::temporal_stride]
+        if len(images) != len(source_keypoints):
+            raise ValueError(
+                f"Temporal preprocessing produced {len(images)} images but "
+                f"{len(source_keypoints)} keypoint frames for episode {episode_index}"
+            )
+        if images_2 is not None and len(images_2) != len(source_keypoints):
+            raise ValueError(
+                f"Temporal preprocessing produced {len(images_2)} second-camera "
+                f"images but {len(source_keypoints)} keypoint frames for episode "
+                f"{episode_index}"
+            )
         pose, keypoints, pose_valid_frames = _keypoints_to_pose_and_flat(
             source_keypoints, pose_from
         )
@@ -364,15 +445,19 @@ def convert_human_dataset(
         if ep_path.exists() and not overwrite:
             raise FileExistsError(f"{ep_path} exists. Pass --overwrite to replace it.")
 
+        image_data = {"images.front_1": images}
+        if images_2 is not None:
+            image_data["images.front_2"] = images_2
+
         ZarrWriter.create_and_write(
             episode_path=ep_path,
             numeric_data={
                 "right.obs_ee_pose": pose,
                 "right.obs_keypoints": keypoints,
             },
-            image_data={"images.front_1": images},
+            image_data=image_data,
             embodiment="custom_human_right_arm",
-            fps=int(info.get("fps", 30)),
+            fps=int(round(float(info.get("fps", 30)) / temporal_stride)),
             task_name=task_name,
             task_description=task_description,
             metadata_override={
@@ -381,11 +466,16 @@ def convert_human_dataset(
                 "source_keypoint_path": str(keypoint_path),
                 "source_episode_index": episode_index,
                 "source_video_key": video_key,
+                "source_second_video_key": second_video_key,
                 "source_keypoint_order": MANO_CANONICAL_ORDER,
                 "source_keypoint_points": int(source_keypoints.shape[1]),
                 "keypoint_scale": float(keypoint_scale),
                 "human_pose_from": pose_from,
                 "human_pose_valid_frames": int(pose_valid_frames),
+                "source_total_frames": int(len(df)),
+                "temporal_stride": int(temporal_stride),
+                "spatial_scale_factor": int(spatial_scale_factor),
+                "center_crop_size": center_crop_size,
             },
         )
         LOGGER.info("Wrote %s", ep_path)
@@ -428,6 +518,7 @@ def parse_args() -> argparse.Namespace:
         default=Path("./data/custom_human_azure_kinect_zarr/human_mug_table_2cam_depth"),
     )
     parser.add_argument("--video-key", type=str, default=FRONT_COLOR_KEY)
+    parser.add_argument("--second-video-key", type=str, default=LEFT_COLOR_KEY)
     parser.add_argument(
         "--keypoint-suffix",
         type=str,
@@ -447,6 +538,9 @@ def parse_args() -> argparse.Namespace:
         default="mecka_right_hand",
         help="Which point summary becomes right.obs_ee_pose xyz.",
     )
+    parser.add_argument("--temporal-stride", type=int, default=1)
+    parser.add_argument("--spatial-scale-factor", type=int, default=1)
+    parser.add_argument("--center-crop-size", type=int, default=None)
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -461,6 +555,7 @@ def main() -> None:
                 args.robot_output_dir,
                 overwrite=args.overwrite,
                 video_key=args.video_key,
+                second_video_key=args.second_video_key,
             )
         )
     if args.mode in ("human", "both"):
@@ -474,6 +569,9 @@ def main() -> None:
                 keypoint_scale=args.keypoint_scale,
                 keypoint_suffix=args.keypoint_suffix,
                 pose_from=args.human_pose_from,
+                temporal_stride=args.temporal_stride,
+                spatial_scale_factor=args.spatial_scale_factor,
+                center_crop_size=args.center_crop_size,
             )
         )
     print(f"Wrote {total} EgoVerse Zarr episodes.")

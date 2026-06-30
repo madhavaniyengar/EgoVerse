@@ -1,0 +1,73 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+# 83 human episodes + 199 franka episodes from swapobjects task
+
+train_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/human_swapobjects
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_transform_list
+        mode: cartesian
+    mode: total
+
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/franka_swapobjects
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_transform_list
+        mode: cartesian
+    mode: total
+
+valid_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/human_swapobjects
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_transform_list
+        mode: cartesian
+    mode: total
+
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/franka_swapobjects
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_transform_list
+        mode: cartesian
+    mode: total
+
+train_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 16
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 16
+    num_workers: 6
+
+valid_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 0
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 0
+    num_workers: 6

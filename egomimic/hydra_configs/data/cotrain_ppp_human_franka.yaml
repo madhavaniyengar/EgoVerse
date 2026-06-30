@@ -1,0 +1,81 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+# PPP human and Franka data are both preprocessed to 10 Hz and 300x300 RGB.
+# A deterministic episode-level 80/20 split is applied independently per domain.
+train_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.ppp_human_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect2Cam.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect2Cam.get_transform_list
+        mode: cartesian
+    mode: train
+    valid_ratio: 0.2
+    check_bounds: false
+
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.ppp_franka_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.FrankaWrist.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.FrankaWrist.get_transform_list
+        mode: cartesian
+    mode: train
+    valid_ratio: 0.2
+    check_bounds: false
+
+valid_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.ppp_human_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect2Cam.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect2Cam.get_transform_list
+        mode: cartesian
+    mode: valid
+    valid_ratio: 0.2
+    check_bounds: false
+
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.ppp_franka_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.FrankaWrist.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.FrankaWrist.get_transform_list
+        mode: cartesian
+    mode: valid
+    valid_ratio: 0.2
+    check_bounds: false
+
+train_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 32
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 32
+    num_workers: 6
+
+valid_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 32
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 32
+    num_workers: 6

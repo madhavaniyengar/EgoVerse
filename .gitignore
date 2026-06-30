@@ -50,5 +50,6 @@ external_ckpts/
 external/MANO/
 
 data/
+!egomimic/hydra_configs/data/
+!egomimic/hydra_configs/data/cotrain_ppp_human_franka.yaml
 wandb_key
-

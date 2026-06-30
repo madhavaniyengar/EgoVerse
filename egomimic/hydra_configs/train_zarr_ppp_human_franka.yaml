@@ -1,0 +1,20 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_cotrain_ppp_2cam_wrist
+  - override data: cotrain_ppp_human_franka
+  - _self_
+
+name: ppp_human_franka_cotrain
+description: hpt_shared_2cam_trunk_robot_wrist_separate_heads
+
+reject_outliers: false
+
+# Keep five archival checkpoints over 5,000 epochs; last.ckpt is still updated
+# every epoch by the separate last_checkpoint callback.
+trainer:
+  max_epochs: 5000
+  min_epochs: 5000
+
+callbacks:
+  model_checkpoint:
+    every_n_epochs: 1000

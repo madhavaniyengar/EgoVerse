@@ -4,7 +4,7 @@ cloudpathlib[s3]
 sqlalchemy
 psycopg[binary]
 pandas
-projectaria-tools
+projectaria-tools --no-deps
 opencv-python-headless
 click==8.2.1
 tqdm

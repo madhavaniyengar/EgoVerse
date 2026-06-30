@@ -1,0 +1,42 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+# 20 franka episodes from processed_data/franka_3cam.
+# Uses Franka (not FrankaWrist) so only front_1 and front_2 are loaded; wrist is ignored.
+
+train_datasets:
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/processed_data/franka_3cam
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_transform_list
+        mode: cartesian
+    mode: total
+
+valid_datasets:
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /scratch/madhavai/processed_data/franka_3cam
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_transform_list
+        mode: cartesian
+    mode: total
+
+train_dataloader_params:
+  franka_right_arm:
+    batch_size: 16
+    num_workers: 6
+
+valid_dataloader_params:
+  franka_right_arm:
+    batch_size: 16
+    num_workers: 6

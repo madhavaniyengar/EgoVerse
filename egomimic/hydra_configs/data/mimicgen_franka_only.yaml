@@ -1,0 +1,42 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+# MimicGen pick-place: Franka only (franka_right_arm).
+# Used as the comparison baseline against the cotrain model.
+
+train_datasets:
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.mimicgen_franka_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.MimicgenFranka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.MimicgenFranka.get_transform_list
+        mode: cartesian
+    mode: total
+
+valid_datasets:
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.mimicgen_franka_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.MimicgenFranka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.MimicgenFranka.get_transform_list
+        mode: cartesian
+    mode: total
+
+train_dataloader_params:
+  franka_right_arm:
+    batch_size: 32
+    num_workers: 6
+
+valid_dataloader_params:
+  franka_right_arm:
+    batch_size: 0
+    num_workers: 6

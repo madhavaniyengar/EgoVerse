@@ -1,0 +1,19 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_cotrain_mimicgen
+  - override data: mimicgen_cotrain
+  - _self_
+
+name: mimicgen_cotrain
+description: hpt_cotrain_mimicgen_dino_delta
+
+reject_outliers: false
+
+norm_stats:
+  num_workers: 2
+
+hydra:
+  run:
+    dir: /project_data/held/madhavai/egoverse/logs/${name}/${description}_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: /project_data/held/madhavai/egoverse/logs/${name}/${description}_${now:%Y-%m-%d_%H-%M-%S}

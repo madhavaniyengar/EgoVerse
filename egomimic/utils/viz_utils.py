@@ -4,9 +4,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from egomimic.utils.egomimicUtils import (
+    EXTRINSICS,
     INTRINSICS,
     cam_frame_to_cam_pixels,
     draw_actions,
+    ee_pose_to_cam_frame,
 )
 from egomimic.utils.pose_utils import _split_action_pose, _split_keypoints
 
@@ -139,7 +141,7 @@ def _viz_rotation_txt(image, actions, **kwargs):
     return vis
 
 
-def _viz_traj(image, actions, intrinsics_key, **kwargs):
+def _viz_traj(image, actions, intrinsics_key, extrinsics_key=None, **kwargs):
     color = kwargs.get("color", "Blues")
     alpha = kwargs.get("alpha", 1.0)
     if not ColorPalette.is_valid(color):
@@ -148,6 +150,12 @@ def _viz_traj(image, actions, intrinsics_key, **kwargs):
     image = _prepare_viz_image(image)
     intrinsics = INTRINSICS[intrinsics_key]
     left_xyz, _, right_xyz, _ = _split_action_pose(actions)
+
+    if extrinsics_key is not None:
+        ext = EXTRINSICS[extrinsics_key]
+        right_xyz = ee_pose_to_cam_frame(right_xyz, ext["right"])
+        if not np.all(left_xyz == 0):
+            left_xyz = ee_pose_to_cam_frame(left_xyz, ext["left"])
 
     base = image.copy()
     overlay = base.copy()
