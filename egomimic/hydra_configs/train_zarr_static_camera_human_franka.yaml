@@ -10,3 +10,8 @@ description: hpt_flow_next_observation_15hz_front_wrist
 norm_stats:
   norm_mode: quantile
   sample_frac: 1.0
+
+# Keep numeric validation metrics enabled, but disable legacy language/camera
+# video rendering for this non-language static-camera dataset.
+evaluator:
+  viz_func: null
