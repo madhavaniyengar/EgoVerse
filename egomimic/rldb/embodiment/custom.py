@@ -263,6 +263,32 @@ class FrankaWrist(Franka):
         return keymap
 
 
+class StaticCameraHuman15Hz(CustomHumanAzureKinect):
+    """One-camera human adapter for 15 Hz next-observation training."""
+
+    @classmethod
+    def _get_keymap(cls, keymap_mode: Literal["cartesian"] = "cartesian"):
+        keymap = super()._get_keymap(keymap_mode)
+        # Static-camera exports store the shifted target explicitly.  Mapping
+        # this to obs_ee_pose would incorrectly include the current frame as
+        # the first action, as the legacy custom-human adapter does.
+        keymap["right.action_ee_pose"]["zarr_key"] = "right.action_ee_pose"
+        keymap["right.action_ee_pose"]["horizon"] = 23
+        return keymap
+
+
+class StaticCameraFranka15Hz(FrankaWrist):
+    """Front+wrist Franka adapter for 15 Hz next-observation training."""
+
+    @classmethod
+    def _get_keymap(cls, keymap_mode: Literal["cartesian"] = "cartesian"):
+        keymap = super()._get_keymap(keymap_mode)
+        keymap.pop("observations.images.front_img_2", None)
+        keymap["right.cmd_ee_pose"]["horizon"] = 23
+        keymap["right.cmd_gripper"]["horizon"] = 23
+        return keymap
+
+
 def _build_franka_right_arm_cartesian_transform_list(
     *,
     right_cmd_world: str = "right.cmd_ee_pose",

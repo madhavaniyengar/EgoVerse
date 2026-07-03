@@ -1,0 +1,69 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+train_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.custom_human_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.CustomHumanAzureKinect.get_transform_list
+        mode: cartesian
+    filters:
+      _target_: egomimic.rldb.filters.DatasetFilter
+      filter_lambdas:
+        - "lambda row: row.get('embodiment') == 'custom_human_right_arm'"
+    mode: total
+    valid_ratio: 0.05
+
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: ${paths.custom_franka_dataset_dir}
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.Franka.get_transform_list
+        mode: cartesian
+    filters:
+      _target_: egomimic.rldb.filters.DatasetFilter
+      filter_lambdas:
+        - "lambda row: row.get('embodiment') == 'franka_right_arm'"
+    mode: total
+    valid_ratio: 0.05
+
+valid_datasets:
+  custom_human_right_arm:
+    _target_: ${data.train_datasets.custom_human_right_arm._target_}
+    resolver: ${data.train_datasets.custom_human_right_arm.resolver}
+    filters: ${data.train_datasets.custom_human_right_arm.filters}
+    mode: total
+    valid_ratio: ${data.train_datasets.custom_human_right_arm.valid_ratio}
+
+  franka_right_arm:
+    _target_: ${data.train_datasets.franka_right_arm._target_}
+    resolver: ${data.train_datasets.franka_right_arm.resolver}
+    filters: ${data.train_datasets.franka_right_arm.filters}
+    mode: total
+    valid_ratio: ${data.train_datasets.franka_right_arm.valid_ratio}
+
+train_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 32
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 32
+    num_workers: 6
+
+valid_dataloader_params:
+  custom_human_right_arm:
+    batch_size: 32
+    num_workers: 6
+  franka_right_arm:
+    batch_size: 32
+    num_workers: 6

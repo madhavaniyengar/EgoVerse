@@ -1,0 +1,28 @@
+defaults:
+  - static_camera_human_franka
+  - _self_
+
+train_datasets:
+  franka_right_arm:
+    resolver:
+      folder_path: /data/madhavan/pick_red_mug_franka_egoverse_left_15hz
+
+  custom_human_right_arm:
+    resolver:
+      folder_path: /data/madhavan/pick_red_mug_human/egoverse_human_splits/train_100
+    mode: total
+
+valid_datasets:
+  custom_human_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /data/madhavan/pick_red_mug_human/egoverse_human_splits/valid
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.StaticCameraHuman15Hz.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.StaticCameraHuman15Hz.get_transform_list
+        mode: cartesian
+    mode: total
+    check_bounds: false

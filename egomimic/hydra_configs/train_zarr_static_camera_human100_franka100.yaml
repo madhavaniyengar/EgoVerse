@@ -1,0 +1,12 @@
+defaults:
+  - train_zarr_static_camera_human_franka
+  - override data: static_camera_human100_franka
+  - _self_
+
+name: static_camera_human100_franka100
+description: hpt_flow_human100_robot100_nextobs_15hz
+
+trainer:
+  limit_val_batches: 50
+  check_val_every_n_epoch: 50
+  num_sanity_val_steps: 2

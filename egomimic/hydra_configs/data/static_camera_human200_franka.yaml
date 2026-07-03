@@ -1,0 +1,8 @@
+defaults:
+  - static_camera_human100_franka
+  - _self_
+
+train_datasets:
+  custom_human_right_arm:
+    resolver:
+      folder_path: /data/madhavan/pick_red_mug_human/egoverse_human_splits/train_200
