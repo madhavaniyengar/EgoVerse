@@ -7,7 +7,7 @@ source emimic/bin/activate
 SOURCE=/data/madhavan/pick_red_mug_human
 KEYPOINTS="$SOURCE/wilor_task_calibration_left/world"
 WORLD_FROM_LEFT="$SOURCE/wilor_task_calibration_left/calibration/left_extrinsics.txt"
-OUTPUT="$SOURCE/egoverse_human_left_15hz"
+OUTPUT="$SOURCE/egoverse_human_left_30hz"
 VIDEO_KEY=observation.images.cam_azure_kinect_left.color
 
 mkdir -p "$OUTPUT"
@@ -18,7 +18,7 @@ for shard in {0..6}; do
     --source "$SOURCE/$shard" \
     --keypoint-dir "$KEYPOINTS/$shard" \
     --output-dir "$OUTPUT" \
-    --target-fps 15 \
+    --target-fps 30 \
     --video-key "$VIDEO_KEY" \
     --world-from-camera "$WORLD_FROM_LEFT"
 done

@@ -1,4 +1,4 @@
-"""Export metric MANO keypoints as 15 Hz static-camera human episodes.
+"""Export metric MANO keypoints as static-camera human episodes.
 
 The input sidecars must contain ``(T, 21, 3)`` MANO-order keypoints in metres
 in the front-camera optical frame.  WiLoR/stereo/depth processing is deliberately
@@ -39,7 +39,7 @@ def convert_dataset(
     keypoint_dir: Path,
     output_dir: Path,
     *,
-    target_fps: int = 15,
+    target_fps: int = 30,
     video_key: str = LEFT_COLOR_KEY,
     world_from_camera: np.ndarray | None = None,
     keypoint_suffix: str = ".mp4.keypoints3d.npy",
@@ -138,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--keypoint-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--target-fps", type=int, default=15)
+    parser.add_argument("--target-fps", type=int, default=30)
     parser.add_argument("--video-key", default=LEFT_COLOR_KEY)
     parser.add_argument("--world-from-camera", type=Path)
     parser.add_argument("--keypoint-suffix", default=".mp4.keypoints3d.npy")

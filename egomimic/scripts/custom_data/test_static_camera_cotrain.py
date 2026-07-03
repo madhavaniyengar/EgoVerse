@@ -14,6 +14,7 @@ from egomimic.scripts.custom_data.static_camera_franka_to_egoverse_zarr import (
     next_observation_pairs,
     transform_wxyz_poses,
 )
+from egomimic.scripts.serve_egoverse_policy import _transform_xyzypr
 
 
 def _poses(n: int) -> np.ndarray:
@@ -103,3 +104,24 @@ def test_wilor_world_points_transform_to_front_and_preserve_missing_frames() -> 
     np.testing.assert_allclose(result[0, :, 1], 2.0)
     np.testing.assert_allclose(result[0, :, 2], 3.0)
     np.testing.assert_array_equal(result[1], 0.0)
+
+
+def test_eval_pose_frame_transform_round_trip() -> None:
+    camera_from_base = np.array(
+        [
+            [0.0, -1.0, 0.0, 0.2],
+            [1.0, 0.0, 0.0, -0.1],
+            [0.0, 0.0, 1.0, 0.7],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    )
+    base_poses = np.array(
+        [
+            [0.5, -0.2, 0.3, 0.1, -0.2, 0.3, 0.0],
+            [0.6, 0.1, 0.4, -0.3, 0.15, -0.1, 1.0],
+        ],
+        dtype=np.float32,
+    )
+    camera_poses = _transform_xyzypr(base_poses, camera_from_base)
+    recovered = _transform_xyzypr(camera_poses, np.linalg.inv(camera_from_base))
+    np.testing.assert_allclose(recovered, base_poses, atol=1e-5)

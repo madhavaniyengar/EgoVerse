@@ -24,12 +24,12 @@ def main() -> None:
     parser.add_argument(
         "--source",
         type=Path,
-        default=Path("/data/madhavan/pick_red_mug_human/egoverse_human_left_15hz"),
+        default=Path("/data/madhavan/pick_red_mug_human/egoverse_human_left_30hz"),
     )
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("/data/madhavan/pick_red_mug_human/egoverse_human_splits"),
+        default=Path("/data/madhavan/pick_red_mug_human/egoverse_human_splits_30hz"),
     )
     args = parser.parse_args()
     episodes = sorted(args.source.glob("*.zarr"))

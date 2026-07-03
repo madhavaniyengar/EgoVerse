@@ -107,7 +107,7 @@ def convert_dataset(
     output_dir: Path,
     camera_from_base: np.ndarray,
     *,
-    target_fps: int = 15,
+    target_fps: int = 30,
     camera_key: str = LEFT_COLOR_KEY,
     overwrite: bool = False,
     task_name: str = "static_camera_pick_place",
@@ -195,7 +195,7 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help=".npy or JSON 4x4 transform mapping Franka-base poses to front-camera poses",
     )
-    parser.add_argument("--target-fps", type=int, default=15)
+    parser.add_argument("--target-fps", type=int, default=30)
     parser.add_argument("--camera-key", default=LEFT_COLOR_KEY)
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--task-name", default="static_camera_pick_place")

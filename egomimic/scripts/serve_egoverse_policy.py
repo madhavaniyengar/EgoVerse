@@ -15,16 +15,50 @@ import cv2
 import numpy as np
 import torch
 import zmq
+from scipy.spatial.transform import Rotation
 
 import egomimic.utils.hydra_resolvers  # noqa: F401
 from egomimic.pl_utils.pl_model import ModelWrapper
-
 
 DOMAIN = "franka_right_arm"
 EMBODIMENT_ID = 16
 ACTION_KEY = "actions_cartesian"
 STATE_KEY = "observations.state.ee_pose"
-CAMERA_KEYS = ("front_img_1", "front_img_2", "wrist_img")
+CAMERA_KEYS = ("front_img_1", "wrist_img")
+
+
+def _load_transform(path: Path) -> np.ndarray:
+    if path.suffix.lower() == ".npy":
+        transform = np.load(path)
+    else:
+        transform = np.loadtxt(path)
+    transform = np.asarray(transform, dtype=np.float64)
+    if transform.shape != (4, 4):
+        raise ValueError(f"Expected a 4x4 transform at {path}, got {transform.shape}")
+    if not np.isfinite(transform).all():
+        raise ValueError(f"Transform at {path} contains NaN/Inf")
+    if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-8):
+        raise ValueError(f"Transform at {path} is not homogeneous")
+    rotation = transform[:3, :3]
+    if not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-4):
+        raise ValueError(f"Transform at {path} has a non-orthonormal rotation")
+    return transform
+
+
+def _transform_xyzypr(poses: np.ndarray, target_from_source: np.ndarray) -> np.ndarray:
+    """Transform xyz+ZYX-YPR+gripper poses between rigid coordinate frames."""
+    poses = np.asarray(poses)
+    if poses.shape[-1] != 7:
+        raise ValueError(f"Expected (..., 7) xyz+ypr+gripper poses, got {poses.shape}")
+    flat = poses.reshape(-1, 7).astype(np.float64)
+    source_from_eef = Rotation.from_euler("ZYX", flat[:, 3:6]).as_matrix()
+    target_from_eef = target_from_source[:3, :3][None] @ source_from_eef
+    xyz = (
+        target_from_source[:3, :3] @ flat[:, :3].T
+    ).T + target_from_source[:3, 3]
+    ypr = Rotation.from_matrix(target_from_eef).as_euler("ZYX")
+    result = np.concatenate([xyz, ypr, flat[:, 6:7]], axis=-1)
+    return result.reshape(poses.shape).astype(np.float32)
 
 
 def _preprocess_image(
@@ -99,6 +133,7 @@ class EgoVerseInference:
         image_scale_factor: int,
         crop_shape: tuple[int, int],
         wrist_crop_left: int,
+        camera_from_base: Path,
         resampled_action_len: int,
         num_inference_steps: int,
         crop_viz_output: Path | None,
@@ -110,6 +145,8 @@ class EgoVerseInference:
         self.image_scale_factor = image_scale_factor
         self.crop_shape = crop_shape
         self.wrist_crop_left = wrist_crop_left
+        self.camera_from_base = _load_transform(camera_from_base)
+        self.base_from_camera = np.linalg.inv(self.camera_from_base)
         self.resampled_action_len = resampled_action_len
         self.crop_viz_output = crop_viz_output
         self._wrote_preview = False
@@ -120,10 +157,10 @@ class EgoVerseInference:
 
         configured = {key.rsplit(".", 1)[-1] for key in self.algo.camera_keys[EMBODIMENT_ID]}
         encoded = set(self.algo.encoders.keys())
-        missing = set(CAMERA_KEYS) - configured - encoded
-        if missing or not set(CAMERA_KEYS).issubset(configured) or not set(CAMERA_KEYS).issubset(encoded):
+        if not set(CAMERA_KEYS).issubset(configured) or not set(CAMERA_KEYS).issubset(encoded):
             raise ValueError(
-                f"Checkpoint does not consume all three cameras: configured={configured}, encoders={encoded}"
+                f"Checkpoint does not consume required cameras {CAMERA_KEYS}: "
+                f"configured={configured}, encoders={encoded}"
             )
         print(
             f"[EgoVerse] checkpoint={checkpoint} cameras={CAMERA_KEYS} "
@@ -135,10 +172,6 @@ class EgoVerseInference:
         images = {
             "front_img_1": _preprocess_image(
                 raw["front_img_1"], scale_factor=self.image_scale_factor,
-                crop_shape=self.crop_shape, crop_left=None,
-            ),
-            "front_img_2": _preprocess_image(
-                raw["front_img_2"], scale_factor=self.image_scale_factor,
                 crop_shape=self.crop_shape, crop_left=None,
             ),
             "wrist_img": _preprocess_image(
@@ -164,6 +197,7 @@ class EgoVerseInference:
         state = np.asarray(request["state_ee_pose"], dtype=np.float32)
         if state.shape != (7,):
             raise ValueError(f"state_ee_pose must be xyz+ypr+gripper (7,), got {state.shape}")
+        state = _transform_xyzypr(state, self.camera_from_base)
 
         raw_batch = {
             f"observations.images.{key}": self._image_tensor(value)
@@ -191,6 +225,7 @@ class EgoVerseInference:
         )[ACTION_KEY]
         chunk = prediction.squeeze(0).float().cpu().numpy()
         chunk = _resample_chunk(chunk, self.resampled_action_len)
+        chunk = _transform_xyzypr(chunk, self.base_from_camera)
         if not np.isfinite(chunk).all():
             raise ValueError("Model returned non-finite actions")
 
@@ -217,8 +252,14 @@ def main() -> None:
     parser.add_argument("--image-scale-factor", type=int, default=2)
     parser.add_argument("--crop-shape", type=int, nargs=2, default=(360, 480), metavar=("H", "W"))
     parser.add_argument("--wrist-crop-left", type=int, default=160)
+    parser.add_argument(
+        "--camera-from-base",
+        type=Path,
+        required=True,
+        help="4x4 .npy/txt transform used during training: T_camera_base",
+    )
     parser.add_argument("--resampled-action-len", type=int, default=45)
-    parser.add_argument("--num-inference-steps", type=int, default=10)
+    parser.add_argument("--num-inference-steps", type=int, default=50)
     parser.add_argument("--crop-viz-output", type=Path, default=Path("/tmp/egoverse_crop_preview.jpg"))
     args = parser.parse_args()
 
@@ -228,6 +269,7 @@ def main() -> None:
         image_scale_factor=args.image_scale_factor,
         crop_shape=tuple(args.crop_shape),
         wrist_crop_left=args.wrist_crop_left,
+        camera_from_base=args.camera_from_base,
         resampled_action_len=args.resampled_action_len,
         num_inference_steps=args.num_inference_steps,
         crop_viz_output=args.crop_viz_output,

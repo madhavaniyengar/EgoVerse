@@ -1,132 +1,179 @@
 # Static-Camera Human–Franka Co-training Plan
 
-## Summary
+## Final Training Contract
 
-Use the fixed front camera’s optical frame as the canonical frame for both human and Franka EEF poses:
-
-- Position in metres.
-- Quaternion ordered `wxyz`.
-- Camera axes follow the calibrated camera convention consistently.
-- Human and robot are normalized separately and use separate action heads.
-- `front_img_1` is shared; `wrist_img` exists only for Franka.
-- Convert both datasets to 15 Hz and predict a 1.5-second trajectory, interpolated to the model’s 100-step action horizon.
-
-WiLoR provides MANO hand geometry and orientation, but its weak-perspective reconstruction is not inherently metric. Metric human translation will therefore come from stereo triangulation, checked against front-camera depth, with depth used as fallback. [Official WiLoR implementation](https://github.com/rolpotamias/WiLoR).
-
-## Data Preparation
-
-### Canonical human episode format
-
-Each EgoVerse Zarr episode will contain:
+Train both domains at native 30 Hz as future-state prediction:
 
 ```text
-images.front_1          uint8  (T,H,W,3), RGB
-right.obs_ee_pose       float32 (T,7), [x,y,z,qw,qx,qy,qz]
+action[t] = observation[t+1]
 ```
 
-Processing:
+Use 45 future states, covering targets from `t+1` through `t+45` (1.5 seconds
+at 30 Hz). Do not interpolate action chunks to 100 model steps.
 
-- Synchronize both calibrated RGB views and front depth.
-- Run WiLoR on both RGB views and retain right-hand MANO-order 21-point keypoints.
-- Triangulate corresponding joints into the front-camera optical frame.
-- Accept triangulation when reprojection error is ≤3 pixels, both depths are positive, and the reconstructed hand scale is plausible.
-- Use median-filtered front depth at the WiLoR wrist/palm projection when triangulation is invalid.
-- Derive the palm EEF using EgoVerse’s existing MANO convention: palm centroid for translation and wrist/middle/index/pinky directions for orientation.
-- Enforce quaternion sign continuity and reject degenerate or implausible frames.
-- Interpolate gaps of at most five 15-Hz frames; reject demonstrations with longer gaps or excessive invalid tracking.
-- Downsample synchronized data from its source rate to 15 Hz before export.
+The fixed left/front camera optical frame is the canonical Cartesian frame for
+both human palms and Franka TCP poses. Store positions in metres and
+quaternions as `wxyz`. The dataset adapters convert poses to
+`xyz+yaw/pitch/roll` for the model without changing the time axis.
 
-Human future observations serve as actions. A 23-frame future window—approximately 1.5 seconds—is interpolated to:
+## Dataset Preparation
+
+### Shared rules
+
+- Export observations at 30 Hz (`temporal_stride: 1` for a 30 Hz source).
+- Construct actions only after episode separation; never cross boundaries.
+- Drop the final observation because it has no `t+1` target.
+- Store explicit shifted targets and assert before writing:
+
+```python
+action_pose[t] == observation_pose[t + 1]
+action_gripper[t] == observation_gripper[t + 1]
+```
+
+- Pad a 45-step chunk only at the episode tail by repeating its final valid
+  action. Padding is performed by the dataset loader, not by temporal
+  interpolation.
+- Enforce unit quaternions and quaternion sign continuity during conversion.
+- Reject invalid tracking during preprocessing; use `check_bounds: false` at
+  training time.
+
+### Human episodes
+
+Run WiLoR on the calibrated human views and obtain metric MANO keypoints using
+stereo triangulation, with calibrated depth as verification/fallback. Derive
+the right palm pose using the existing EgoVerse MANO convention and express it
+in the selected fixed camera optical frame.
+
+Export:
 
 ```text
-observations.state.ee_pose  (6,)     xyz + yaw/pitch/roll
-actions_cartesian           (100,6)  future xyz + yaw/pitch/roll
+images.front_1       uint8   (T-1,H,W,3)
+right.obs_ee_pose    float32 (T-1,7)  xyz+quat(wxyz)
+right.action_ee_pose float32 (T-1,7)  next observed palm pose
 ```
 
-Do not synthesize a human gripper scalar; retain the existing separate 6D human head.
-
-### Canonical Franka episode format
-
-Convert `/home/madhavan/lerobot/data/pick_place_red_mug_100/dataset.zarr`, using:
+Use `StaticCameraHuman30Hz`. It loads a 45-step action chunk, converts
+`xyz+wxyz` to `xyz+yaw-pitch-roll`, and returns:
 
 ```text
-observation.images.cam_azure_kinect_front.color → images.front_1
-observation.images.cam_wrist                    → images.wrist
-observation.right_eef_pose                      → right.obs_ee_pose
-action.right_eef_pose                           → right.cmd_ee_pose
+observations.state.ee_pose (6,)
+actions_cartesian          (45,6)
 ```
 
-The source EEF arrays are `[rot6d(6), xyz(3), gripper(1)]`. Conversion will:
+No human gripper dimension is synthesized.
 
-- Convert rotation-6D to a proper rotation matrix and then `wxyz`.
-- Apply the calibrated transform:
+Conversion and split commands:
+
+```bash
+bash scripts/convert_pick_red_mug_human_left_to_egoverse.sh
+
+python -m egomimic.scripts.custom_data.prepare_static_human_splits \
+  --source /data/madhavan/pick_red_mug_human/egoverse_human_left_30hz \
+  --output /data/madhavan/pick_red_mug_human/egoverse_human_splits_30hz
+```
+
+The deterministic split contains 100-episode and 200-episode nested training
+sets plus 18 disjoint validation episodes.
+
+### Franka episodes
+
+Read the consolidated 30 Hz LeRobot Zarr. Use the calibrated left/front image
+as `front_img_1` and retain the wrist camera. Transform every observed TCP pose:
 
 ```text
 T_camera_tcp = T_camera_base @ T_base_tcp
 ```
 
-- Store camera-frame pose and gripper separately.
-- Normalize gripper observation and command consistently to `[0,1]`.
-- Downsample the 30-Hz source by two to 15 Hz while preserving `observation[t] ↔ action[t]` alignment.
-- Ignore the unused second static camera.
-
-Output:
+Do not use the recorded controller action. Explicitly construct:
 
 ```text
-images.front_1          uint8   (T,H,W,3)
-images.wrist            uint8   (T,H,W,3)
-right.obs_ee_pose       float32 (T,7)
-right.obs_gripper       float32 (T,1)
-right.cmd_ee_pose       float32 (T,7)
-right.cmd_gripper       float32 (T,1)
+right.cmd_ee_pose[t] = transformed_observation_ee_pose[t+1]
+right.cmd_gripper[t] = observation_gripper[t+1]
 ```
 
-The dataset transform will use a 23-frame command window and produce:
+Export:
 
 ```text
-observations.state.ee_pose  (7,)
-actions_cartesian           (100,7)
+images.front_1       uint8   (T-1,H,W,3)
+images.wrist         uint8   (T-1,H,W,3)
+right.obs_ee_pose    float32 (T-1,7)
+right.obs_gripper    float32 (T-1,1)
+right.cmd_ee_pose    float32 (T-1,7)
+right.cmd_gripper    float32 (T-1,1)
 ```
 
-## Model and Training Configuration
+The `cmd_*` names are retained for compatibility but represent the next
+observed state. Use `StaticCameraFranka30Hz`, which returns native `(45,7)`
+actions containing `xyz+yaw/pitch/roll+gripper` without interpolation.
 
-- Add a one-front-camera co-training data config using `CustomHumanAzureKinect` and `FrankaWrist`.
-- Use deterministic, disjoint 90/10 episode splits independently for human and robot; never use `mode: total` for both train and validation.
-- Derive a model config from `hpt_cotrain_custom_human_franka`:
-  - Shared modality: `front_img_1`.
-  - Franka-only modality: `wrist_img`.
-  - Shared front-camera ResNet, shared transformer trunk, and domain embeddings.
-  - Separate human 6D and Franka 7D state stems and flow-matching heads.
-  - Preserve the 100-step output horizon.
-- Use equal per-domain batches, initially 32 human and 32 robot samples per optimizer step. `CombinedLoader(max_size_cycle)` will balance domains by cycling the smaller dataset.
-- Compute quantile normalization independently per embodiment for state and action.
-- Disable runtime percentile rejection with `check_bounds: false`; perform data rejection explicitly during conversion instead of silently substituting another sample.
-- Keep photometric color jitter and ImageNet normalization. Do not use geometric image augmentation unless EEF coordinates and camera calibration are transformed identically.
-- Request an A40 through the repository’s prescribed Slurm allocation before training.
+Convert with:
 
-Training sequence:
+```bash
+bash scripts/convert_pick_red_mug_franka_left_to_egoverse.sh
+```
 
-1. Load one episode per domain and verify complete batches.
-2. Overfit a tiny human/robot subset to validate targets and loss wiring.
-3. Run the full co-training experiment.
-4. Compare against a Franka-only model using the same robot split and architecture.
+The output root is:
+
+```text
+/data/madhavan/pick_red_mug_franka_egoverse_left_30hz
+```
+
+## Model and Training
+
+- Domains: `custom_human_right_arm`, `franka_right_arm`.
+- Shared visual input and encoder: `front_img_1`.
+- Franka-only visual stem and encoder: `wrist_img`.
+- Shared transformer trunk with domain embeddings.
+- Human head: `(45,6)`.
+- Franka head: `(45,7)`.
+- Trunk, flow-policy head, and CrossTransformer horizons are all 45.
+- Use continuous observed gripper values; do not add binary classification or
+  special loss weighting.
+- Normalize each embodiment independently with quantile normalization.
+- Use batch size 32 per domain initially.
+- Keep photometric augmentation only. Do not apply geometric image transforms
+  unless the calibration and Cartesian targets are transformed consistently.
+
+Train after obtaining the required GPU allocation:
+
+```bash
+source emimic/bin/activate
+
+python egomimic/trainHydra.py \
+  --config-name train_zarr_static_camera_human100_franka100
+
+python egomimic/trainHydra.py \
+  --config-name train_zarr_static_camera_human200_franka100
+```
+
+For the robot-only baseline, use:
+
+```bash
+python egomimic/trainHydra.py \
+  --config-name train_zarr_static_camera_franka30 \
+  paths.custom_franka_dataset_dir=/data/madhavan/pick_red_mug_franka_egoverse_left_30hz
+```
 
 ## Validation and Acceptance Tests
 
-- Project human palm and Franka TCP positions into `front_img_1`; overlays must track the visible hand/gripper.
-- Verify all poses are in metres, quaternions are unit length and continuous, and rotations round-trip through `rot6d → matrix → quaternion`.
-- Check stereo reprojection error, depth-versus-triangulation disagreement, invalid-frame percentage, and trajectory velocity/acceleration outliers per episode.
-- Confirm every episode has synchronized array lengths and monotonic 15-Hz timestamps.
-- Assert sample shapes: human `(100,6)` actions and robot `(100,7)` actions.
-- Assert train/validation episode hashes are disjoint.
-- Visualize unnormalized model targets after the dataset pipeline to confirm normalization is reversible.
-- Require the tiny-subset run to overfit before launching full training.
-- Evaluate robot validation action error in camera-frame translation, rotation, and gripper dimensions, plus task rollout success when available.
+- Assert every converted episode reports `fps: 30`, `temporal_stride: 1`,
+  `action_semantics: next_observation`, and the expected camera optical frame.
+- Verify the first raw action is exactly observation 1 and that shifting never
+  crosses an episode boundary.
+- Assert dataset-pipeline shapes: human `(45,6)`, Franka `(45,7)`.
+- Assert neither 30 Hz adapter contains `InterpolatePose` or
+  `InterpolateLinear`.
+- Verify the trunk horizon, policy horizon, and denoiser `act_seq` all equal 45.
+- Project human palms and robot TCPs onto `front_img_1` to check calibration.
+- Verify train and validation episode hashes are disjoint.
+- Overfit a small two-domain subset before the full run.
+- At evaluation, unnormalize the first predicted action and compare it with the
+  actual next observed EEF pose in the camera frame.
 
 ## Assumptions
 
-- The front camera remains rigidly mounted and uses the same calibration during human and robot collection.
-- `action.right_eef_pose` is the intended commanded Franka TCP target; the existing dataset records it synchronously with each observation.
-- Stereo triangulation is primary for human metric position; calibrated depth is validation and fallback.
-- Human orientation follows EgoVerse’s existing right-hand MANO palm-frame convention.
-- Human and Franka retain separate action heads; no artificial human gripper label or shared 7D action head is introduced.
+- Both source datasets and corresponding camera streams are synchronized at
+  30 Hz.
+- The fixed camera remains rigidly calibrated relative to the Franka base.
+- Human and robot targets use the same selected camera optical-frame convention.
+- Next-observation prediction is intentional for both embodiments.

@@ -277,6 +277,25 @@ class StaticCameraHuman15Hz(CustomHumanAzureKinect):
         return keymap
 
 
+class StaticCameraHuman30Hz(CustomHumanAzureKinect):
+    """One-camera human adapter for native 30 Hz next-state training."""
+
+    @classmethod
+    def _get_keymap(cls, keymap_mode: Literal["cartesian"] = "cartesian"):
+        keymap = super()._get_keymap(keymap_mode)
+        keymap["right.action_ee_pose"]["zarr_key"] = "right.action_ee_pose"
+        keymap["right.action_ee_pose"]["horizon"] = 45
+        return keymap
+
+    @staticmethod
+    def get_transform_list(
+        mode: Literal["cartesian"] = "cartesian",
+    ) -> list[Transform]:
+        if mode != "cartesian":
+            raise ValueError(f"Unsupported transform mode '{mode}'")
+        return _build_single_arm_human_native_cartesian_transform_list()
+
+
 class StaticCameraFranka15Hz(FrankaWrist):
     """Front+wrist Franka adapter for 15 Hz next-observation training."""
 
@@ -287,6 +306,33 @@ class StaticCameraFranka15Hz(FrankaWrist):
         keymap["right.cmd_ee_pose"]["horizon"] = 23
         keymap["right.cmd_gripper"]["horizon"] = 23
         return keymap
+
+
+class StaticCameraFranka30Hz(FrankaWrist):
+    """Front+wrist Franka adapter for native 30 Hz next-state training.
+
+    The input Zarr must already contain 45-step action chunks whose first
+    element is the observation at t + 1.  Unlike the legacy EgoMimic robot
+    transform, this adapter does not temporally interpolate those chunks.
+    Poses are still converted from xyz+wxyz to xyz+yaw-pitch-roll before
+    being passed to the model.
+    """
+
+    @classmethod
+    def _get_keymap(cls, keymap_mode: Literal["cartesian"] = "cartesian"):
+        keymap = super()._get_keymap(keymap_mode)
+        keymap.pop("observations.images.front_img_2", None)
+        keymap["right.cmd_ee_pose"]["horizon"] = 45
+        keymap["right.cmd_gripper"]["horizon"] = 45
+        return keymap
+
+    @staticmethod
+    def get_transform_list(
+        mode: Literal["cartesian"] = "cartesian",
+    ) -> list[Transform]:
+        if mode != "cartesian":
+            raise ValueError(f"Unsupported transform mode '{mode}'")
+        return _build_franka_native_cartesian_transform_list()
 
 
 def _build_franka_right_arm_cartesian_transform_list(
@@ -326,6 +372,57 @@ def _build_franka_right_arm_cartesian_transform_list(
             delete_old_keys=True,
         ),
         DeleteKeys(keys_to_delete=[right_cmd_gripper, right_obs_gripper]),
+        NumpyToTensor(keys=[action_key, obs_key]),
+    ]
+
+
+def _build_franka_native_cartesian_transform_list(
+    *,
+    right_cmd_world: str = "right.cmd_ee_pose",
+    right_obs_world: str = "right.obs_ee_pose",
+    right_cmd_gripper: str = "right.cmd_gripper",
+    right_obs_gripper: str = "right.obs_gripper",
+    action_key: str = "actions_cartesian",
+    obs_key: str = "observations.state.ee_pose",
+) -> list[Transform]:
+    """Build 7D Cartesian actions without changing their time axis."""
+    return [
+        XYZWXYZ_to_XYZYPR(keys=[right_cmd_world, right_obs_world]),
+        ConcatKeys(
+            key_list=[right_cmd_world, right_cmd_gripper],
+            new_key_name=action_key,
+            delete_old_keys=True,
+        ),
+        ConcatKeys(
+            key_list=[right_obs_world, right_obs_gripper],
+            new_key_name=obs_key,
+            delete_old_keys=True,
+        ),
+        DeleteKeys(keys_to_delete=[right_cmd_gripper, right_obs_gripper]),
+        NumpyToTensor(keys=[action_key, obs_key]),
+    ]
+
+
+def _build_single_arm_human_native_cartesian_transform_list(
+    *,
+    right_action_world: str = "right.action_ee_pose",
+    right_obs_world: str = "right.obs_ee_pose",
+    action_key: str = "actions_cartesian",
+    obs_key: str = "observations.state.ee_pose",
+) -> list[Transform]:
+    """Build 6D human Cartesian actions without changing their time axis."""
+    return [
+        XYZWXYZ_to_XYZYPR(keys=[right_action_world, right_obs_world]),
+        ConcatKeys(
+            key_list=[right_action_world],
+            new_key_name=action_key,
+            delete_old_keys=True,
+        ),
+        ConcatKeys(
+            key_list=[right_obs_world],
+            new_key_name=obs_key,
+            delete_old_keys=True,
+        ),
         NumpyToTensor(keys=[action_key, obs_key]),
     ]
 
