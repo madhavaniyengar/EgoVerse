@@ -154,6 +154,7 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         config_tree=_build_model_config_tree(cfg),
         norm_stats_state=norm_stats.to_state(),
         scheduler_interval=cfg.model.get("scheduler_interval", "step"),
+        grad_norm_mad_scale=cfg.model.get("grad_norm_mad_scale", None),
     )
 
     _log_dataset_frame_counts(datamodule.train_datasets, datamodule.valid_datasets)

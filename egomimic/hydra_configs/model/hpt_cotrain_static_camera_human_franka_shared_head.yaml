@@ -1,0 +1,46 @@
+defaults:
+  - hpt_cotrain_static_camera_human_franka
+  - _self_
+
+# Single shared flow head for static-camera human/Franka co-training.
+# Human actions are 6D xyz+ypr and are zero-padded by the policy head to
+# match Franka's 7D xyz+ypr+gripper action layout.
+robomimic_model:
+  shared_ac_key: actions_cartesian
+
+  head_specs:
+    custom_human_right_arm: null
+    franka_right_arm: null
+    shared:
+      _target_: egomimic.models.fm_policy.FMPolicy
+      action_horizon: 45
+      num_inference_steps: 50
+      pooling: null
+      padding: zero
+      time_dist: beta
+      infer_ac_dims:
+        custom_human_right_arm: 7
+        franka_right_arm: 7
+      model:
+        _target_: egomimic.models.denoising_nets.CrossTransformer
+        nblocks: 6
+        cond_dim: 256
+        hidden_dim: 128
+        act_dim: 7
+        act_seq: 45
+        n_heads: 4
+        dropout: 0.1
+        mlp_layers: 4
+        mlp_ratio: 4
+
+optimizer:
+  _target_: torch.optim.AdamW
+  _partial_: true
+  lr: 3e-4
+  weight_decay: 0.0001
+
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  _partial_: true
+  T_max: 1400
+  eta_min: 1e-5

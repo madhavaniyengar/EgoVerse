@@ -1,0 +1,16 @@
+defaults:
+  - train_zarr_static_camera_human_franka
+  - override model: hpt_cotrain_static_camera_human_franka_shared_head
+  - override data: static_camera_filtered_human50_franka
+  - _self_
+
+name: static_camera_filtered_human50_franka100_shared_head
+description: hpt_flow_shared_head_filtered_human50_robot100_nextobs_30hz
+
+model:
+  grad_norm_mad_scale: 6.0
+
+trainer:
+  limit_val_batches: 10
+  check_val_every_n_epoch: 300
+  num_sanity_val_steps: 1

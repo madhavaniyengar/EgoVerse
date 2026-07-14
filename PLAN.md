@@ -72,8 +72,12 @@ python -m egomimic.scripts.custom_data.prepare_static_human_splits \
   --output /data/madhavan/pick_red_mug_human/egoverse_human_splits_30hz
 ```
 
-The deterministic split contains 100-episode and 200-episode nested training
-sets plus 18 disjoint validation episodes.
+The deterministic split contains nested 50-, 100-, 150-, and 200-episode
+training sets plus 18 disjoint validation episodes:
+
+```text
+train_50 ⊂ train_100 ⊂ train_150 ⊂ train_200
+```
 
 ### Franka episodes
 

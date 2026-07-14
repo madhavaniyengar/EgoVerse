@@ -36,6 +36,7 @@ class ModelWrapper(LightningModule):
         scheduler_frequency: int = 1,
         evaluator=None,
         enable_grad_norm: bool = True,
+        grad_norm_mad_scale: float | None = None,
     ):
         """
         Args:
@@ -61,6 +62,8 @@ class ModelWrapper(LightningModule):
         except Exception:
             pass
         self.enable_grad_norm = enable_grad_norm
+        if grad_norm_mad_scale is not None:
+            self.grad_norm_mad_scale = float(grad_norm_mad_scale)
         self.grad_norm_history = deque(maxlen=self.grad_norm_mad_window)
 
         self.epoch_memory_stats = []  # Store memory stats per epoch
