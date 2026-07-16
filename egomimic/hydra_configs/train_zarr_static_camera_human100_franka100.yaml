@@ -7,6 +7,6 @@ name: static_camera_human100_franka100
 description: hpt_flow_human100_robot100_nextobs_30hz
 
 trainer:
-  limit_val_batches: 50
-  check_val_every_n_epoch: 100
+  limit_val_batches: 20
+  check_val_every_n_epoch: 300
   num_sanity_val_steps: 1

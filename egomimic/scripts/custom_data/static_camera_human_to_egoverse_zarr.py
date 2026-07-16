@@ -43,6 +43,13 @@ def convert_dataset(
     video_key: str = LEFT_COLOR_KEY,
     world_from_camera: np.ndarray | None = None,
     keypoint_suffix: str = ".mp4.keypoints3d.npy",
+    keypoint_index_offset: int = 0,
+    episode_limit: int | None = None,
+    keypoints_at_target_fps: bool = False,
+    image_scale_factor: int = 1,
+    crop_height: int | None = None,
+    crop_width: int | None = None,
+    keypoint_source: str = "rgbd_metric",
     overwrite: bool = False,
 ) -> list[Path]:
     info = json.loads((root / "meta/info.json").read_text())
@@ -53,6 +60,8 @@ def convert_dataset(
         )
     stride = source_fps // target_fps
     episodes = _read_jsonl(root / "meta/episodes.jsonl")
+    if episode_limit is not None:
+        episodes = episodes[:episode_limit]
     base_time = _base_time_from_dir(root)
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -72,12 +81,27 @@ def convert_dataset(
             _video_path(root, info, episode_id, video_key),
             expected_frames=frame_count,
             temporal_stride=stride,
+            spatial_scale_factor=image_scale_factor,
         )
-        keypoint_path = keypoint_dir / f"episode_{episode_id:06d}{keypoint_suffix}"
-        keypoints = _load_mano_keypoints(keypoint_path, frame_count, scale=1.0)
+        if (crop_height is None) != (crop_width is None):
+            raise ValueError("crop-height and crop-width must be specified together")
+        if crop_height is not None and crop_width is not None:
+            height, width = images.shape[1:3]
+            if crop_height > height or crop_width > width:
+                raise ValueError(
+                    f"requested crop {crop_height}x{crop_width} exceeds image {height}x{width}"
+                )
+            top = (height - crop_height) // 2
+            left = (width - crop_width) // 2
+            images = images[:, top : top + crop_height, left : left + crop_width]
+        keypoint_index = episode_id + keypoint_index_offset
+        keypoint_path = keypoint_dir / f"episode_{keypoint_index:06d}{keypoint_suffix}"
+        expected_keypoint_frames = len(range(0, frame_count, stride)) if keypoints_at_target_fps else frame_count
+        keypoints = _load_mano_keypoints(keypoint_path, expected_keypoint_frames, scale=1.0)
         if world_from_camera is not None:
             keypoints = transform_points(keypoints, np.linalg.inv(world_from_camera))
-        keypoints = keypoints[::stride]
+        if not keypoints_at_target_fps:
+            keypoints = keypoints[::stride]
         if len(keypoints) < 2:
             LOGGER.warning(
                 "Skipping episode %d: fewer than two frames after downsampling",
@@ -122,6 +146,10 @@ def convert_dataset(
                 "source_keypoint_order": MANO_CANONICAL_ORDER,
                 "source_fps": source_fps,
                 "temporal_stride": stride,
+                "keypoints_at_target_fps": keypoints_at_target_fps,
+                "image_scale_factor": image_scale_factor,
+                "center_crop_hw": [crop_height, crop_width],
+                "keypoint_3d_source": keypoint_source,
                 "action_semantics": "next_observation",
                 "pose_frame": "selected_camera_optical",
                 "source_video_key": video_key,
@@ -142,6 +170,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--video-key", default=LEFT_COLOR_KEY)
     parser.add_argument("--world-from-camera", type=Path)
     parser.add_argument("--keypoint-suffix", default=".mp4.keypoints3d.npy")
+    parser.add_argument("--keypoint-index-offset", type=int, default=0)
+    parser.add_argument("--episode-limit", type=int)
+    parser.add_argument("--keypoints-at-target-fps", action="store_true")
+    parser.add_argument("--image-scale-factor", type=int, default=1)
+    parser.add_argument("--crop-height", type=int)
+    parser.add_argument("--crop-width", type=int)
+    parser.add_argument("--keypoint-source", default="rgbd_metric")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -162,6 +197,13 @@ def main() -> None:
         video_key=args.video_key,
         world_from_camera=world_from_camera,
         keypoint_suffix=args.keypoint_suffix,
+        keypoint_index_offset=args.keypoint_index_offset,
+        episode_limit=args.episode_limit,
+        keypoints_at_target_fps=args.keypoints_at_target_fps,
+        image_scale_factor=args.image_scale_factor,
+        crop_height=args.crop_height,
+        crop_width=args.crop_width,
+        keypoint_source=args.keypoint_source,
         overwrite=args.overwrite,
     )
 

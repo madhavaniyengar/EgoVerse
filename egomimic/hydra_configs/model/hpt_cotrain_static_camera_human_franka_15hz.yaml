@@ -1,0 +1,29 @@
+defaults:
+  - hpt_cotrain_custom_human_franka_15hz
+  - _self_
+
+# The fixed front view is shared. The wrist view is a Franka-only modality;
+# both domains still pass through the common transformer trunk.
+robomimic_model:
+  shared_obs_keys: [front_img_1]
+
+  stem_specs:
+    franka_right_arm:
+      wrist_img:
+        _target_: egomimic.models.hpt_nets.MLPPolicyStem
+        input_dim: 256
+        output_dim: 256
+        widths: [256]
+        specs:
+          random_horizon_masking: false
+          cross_attn:
+            crossattn_latent: 16
+            crossattn_heads: 8
+            crossattn_dim_head: 64
+            crossattn_modality_dropout: 0.1
+            modality_embed_dim: 256
+
+  encoder_specs:
+    wrist_img:
+      _target_: egomimic.models.hpt_nets.ResNet
+      output_dim: 256

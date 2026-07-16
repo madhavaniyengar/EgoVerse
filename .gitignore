@@ -24,6 +24,7 @@ egomimic/scripts/aloha_process/datasetFig
 egomimic/outputs
 outputs/
 logs/
+logs
 # Machine-local Python environments. Never track these or symlinks to them:
 # checkout must not replace a working environment with another host's path.
 emimic

@@ -276,6 +276,14 @@ class StaticCameraHuman15Hz(CustomHumanAzureKinect):
         keymap["right.action_ee_pose"]["horizon"] = 23
         return keymap
 
+    @staticmethod
+    def get_transform_list(
+        mode: Literal["cartesian"] = "cartesian",
+    ) -> list[Transform]:
+        if mode != "cartesian":
+            raise ValueError(f"Unsupported transform mode '{mode}'")
+        return _build_single_arm_human_native_cartesian_transform_list()
+
 
 class StaticCameraHuman30Hz(CustomHumanAzureKinect):
     """One-camera human adapter for native 30 Hz next-state training."""
@@ -306,6 +314,14 @@ class StaticCameraFranka15Hz(FrankaWrist):
         keymap["right.cmd_ee_pose"]["horizon"] = 23
         keymap["right.cmd_gripper"]["horizon"] = 23
         return keymap
+
+    @staticmethod
+    def get_transform_list(
+        mode: Literal["cartesian"] = "cartesian",
+    ) -> list[Transform]:
+        if mode != "cartesian":
+            raise ValueError(f"Unsupported transform mode '{mode}'")
+        return _build_franka_native_cartesian_transform_list()
 
 
 class StaticCameraFranka30Hz(FrankaWrist):
