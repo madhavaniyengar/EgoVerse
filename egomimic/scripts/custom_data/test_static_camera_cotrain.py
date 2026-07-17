@@ -14,7 +14,10 @@ from egomimic.scripts.custom_data.static_camera_franka_to_egoverse_zarr import (
     next_observation_pairs,
     transform_wxyz_poses,
 )
-from egomimic.scripts.serve_egoverse_policy import _transform_xyzypr
+from egomimic.scripts.serve_egoverse_policy import (
+    _select_action_prediction,
+    _transform_xyzypr,
+)
 
 
 def _poses(n: int) -> np.ndarray:
@@ -125,3 +128,16 @@ def test_eval_pose_frame_transform_round_trip() -> None:
     camera_poses = _transform_xyzypr(base_poses, camera_from_base)
     recovered = _transform_xyzypr(camera_poses, np.linalg.inv(camera_from_base))
     np.testing.assert_allclose(recovered, base_poses, atol=1e-5)
+
+
+def test_eval_selects_domain_or_shared_action_head() -> None:
+    domain_prediction = object()
+    shared_prediction = object()
+
+    assert _select_action_prediction(
+        {"franka_right_arm": domain_prediction, "shared": shared_prediction},
+        "franka_right_arm",
+    ) is domain_prediction
+    assert _select_action_prediction(
+        {"shared": shared_prediction}, "franka_right_arm"
+    ) is shared_prediction

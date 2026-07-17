@@ -52,13 +52,34 @@ def marker(pose: np.ndarray, size: float, color: tuple[float, float, float]):
     return axes, sphere
 
 
+def find_zarr_episode(root: Path, episode: int) -> Path:
+    legacy = root / f"episode_{episode:06d}.zarr"
+    if legacy.exists():
+        return legacy
+    matches = []
+    for path in root.glob("*.zarr"):
+        try:
+            group = zarr.open_group(str(path), mode="r")
+            if int(group.attrs.get("source_episode_index", -1)) == episode:
+                matches.append(path)
+        except (KeyError, TypeError, ValueError):
+            continue
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise FileNotFoundError(
+            f"No Zarr with source_episode_index={episode} found under {root}"
+        )
+    raise ValueError(f"Multiple Zarr episodes match source episode {episode}: {matches}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-root", type=Path, required=True)
     parser.add_argument("--zarr-root", type=Path, required=True)
     parser.add_argument("--episode", type=int, default=0)
     parser.add_argument("--frame", type=int, default=0, help="15 Hz EgoVerse frame")
-    parser.add_argument("--camera", default="cam0", help="cam0 is the left camera")
+    parser.add_argument("--camera", default="cam1", help="camera frame used by the EEF poses")
     parser.add_argument(
         "--intrinsics",
         type=Path,
@@ -72,7 +93,7 @@ def main() -> None:
     args = parser.parse_args()
 
     episode_name = f"episode_{args.episode:06d}"
-    episode_path = args.zarr_root / f"{episode_name}.zarr"
+    episode_path = find_zarr_episode(args.zarr_root, args.episode)
     raw_episode = args.raw_root / episode_name
     rgb_path = raw_episode / f"{args.camera}.mp4"
     depth_path = raw_episode / f"{args.camera}_depth.mkv"
@@ -121,7 +142,7 @@ def main() -> None:
         print("Blue sphere=next-observation command EEF")
     o3d.visualization.draw_geometries(
         geometries,
-        window_name=f"Franka EEF in left-camera PCD | episode {args.episode} frame {args.frame}",
+        window_name=f"Franka EEF in {args.camera} PCD | episode {args.episode} frame {args.frame}",
         width=1280,
         height=800,
     )

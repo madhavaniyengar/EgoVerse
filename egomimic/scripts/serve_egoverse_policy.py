@@ -108,6 +108,18 @@ def _resample_chunk(chunk: np.ndarray, target_length: int) -> np.ndarray:
     return out.astype(np.float32)
 
 
+def _select_action_prediction(predictions: dict[str, torch.Tensor], domain: str) -> torch.Tensor:
+    """Select a domain-specific action head, falling back to a shared head."""
+    if domain in predictions:
+        return predictions[domain]
+    if "shared" in predictions:
+        return predictions["shared"]
+    raise KeyError(
+        f"No action prediction for {domain!r} or 'shared'; "
+        f"available outputs: {sorted(predictions)}"
+    )
+
+
 def _load_checkpoint(path: Path, device: torch.device) -> ModelWrapper:
     checkpoint = torch.load(path, map_location="cpu", weights_only=False)
     hparams = checkpoint["hyper_parameters"]
@@ -219,7 +231,8 @@ class EgoVerseInference:
             embodiment=torch.tensor([EMBODIMENT_ID], dtype=torch.int64, device=self.device),
             action=torch.zeros(1, 100, 7, device=self.device),
         )
-        prediction = self.policy.forward(DOMAIN, data)[DOMAIN]
+        predictions = self.policy.forward(DOMAIN, data)
+        prediction = _select_action_prediction(predictions, DOMAIN)
         prediction = self.algo.norm_stats.unnormalize(
             {ACTION_KEY: prediction}, EMBODIMENT_ID
         )[ACTION_KEY]

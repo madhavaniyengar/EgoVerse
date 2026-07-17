@@ -9,7 +9,7 @@ EGOVERSE_ROOT=/home/madhavan/EgoVerse
 POLARIS_ROOT=/home/madhavan/polaris
 SERVER_PY="$EGOVERSE_ROOT/emimic/bin/python"
 EVAL_PY="$POLARIS_ROOT/.venv/bin/python"
-CAMERA_FROM_BASE=/data/madhavan/pick_red_mug_human/wilor_task_calibration_left/calibration/left_from_base.npy
+CAMERA_FROM_BASE="$POLARIS_ROOT/PolaRiS-Hub/put_red_cup_no_curtain/cam1_from_base.txt"
 
 # Calling the venv Python by absolute path does not prepend the venv's bin
 # directory to PATH. PyTorch's C++ extension loader searches PATH for the
@@ -18,21 +18,23 @@ export PATH="$POLARIS_ROOT/.venv/bin:$PATH"
 
 ROLLOUTS="${ROLLOUTS:-20}"
 EVAL_SEEDS="${EVAL_SEEDS:-42 43 44}"
-OPEN_LOOP_HORIZON="${OPEN_LOOP_HORIZON:-45}"
+OPEN_LOOP_HORIZON="${OPEN_LOOP_HORIZON:-23}"
+CONTROL_FREQUENCY_HZ="${CONTROL_FREQUENCY_HZ:-15}"
 SERVER_READY_TIMEOUT="${SERVER_READY_TIMEOUT:-180}"
-EPOCH="${EPOCH:-999}"
-SWEEP_NAME="${SWEEP_NAME:-egoverse_human_sweep_${EPOCH}_$(date +%Y%m%d_%H%M%S)}"
+EPOCH="${EPOCH:-799}"
+SWEEP_NAME="${SWEEP_NAME:-egoverse_rectified200_400_sweep_${EPOCH}_$(date +%Y%m%d_%H%M%S)}"
 SWEEP_ROOT="${SWEEP_ROOT:-$POLARIS_ROOT/runs/$SWEEP_NAME}"
 LOG_DIR="$SWEEP_ROOT/logs"
 PREVIEW_DIR="$SWEEP_ROOT/previews"
 
-CKPT_50="$EGOVERSE_ROOT/logs/static_camera_human50_franka100/hpt_flow_human50_robot100_nextobs_30hz_2026-07-05_01-48-35/checkpoints/epoch_epoch=$EPOCH.ckpt"
+CKPT_50="$EGOVERSE_ROOT/logs/static_camera_human50_franka100_shared_head/hpt_flow_shared_head_human50_robot100_nextobs_30hz_2026-07-14_15-30-49/checkpoints/epoch_epoch=$EPOCH.ckpt"
 CKPT_100="$EGOVERSE_ROOT/logs/static_camera_human100_franka100/hpt_flow_human100_robot100_nextobs_30hz_2026-07-03_17-15-59/checkpoints/epoch_epoch=$EPOCH.ckpt"
-CKPT_150="$EGOVERSE_ROOT/logs/static_camera_human150_franka100/hpt_flow_human150_robot100_nextobs_30hz_2026-07-05_01-52-20/checkpoints/epoch_epoch=$EPOCH.ckpt"
-CKPT_200="$EGOVERSE_ROOT/logs/static_camera_human200_franka100/hpt_flow_human200_robot100_nextobs_30hz_2026-07-03_17-19-50/checkpoints/epoch_epoch=$EPOCH.ckpt"
-CKPT_FILTERED_50="$EGOVERSE_ROOT/logs/static_camera_filtered_human50_franka100/hpt_flow_filtered_human50_robot100_nextobs_30hz_2026-07-09_16-50-39/checkpoints/epoch_epoch=$EPOCH.ckpt"
+CKPT_150="$EGOVERSE_ROOT/logs/static_camera_human150_franka100_shared_head/hpt_flow_shared_head_human150_robot100_nextobs_30hz_2026-07-14_15-35-15/checkpoints/epoch_epoch=$EPOCH.ckpt"
+CKPT_200="$EGOVERSE_ROOT/logs/static_camera_human200_franka100_shared_head/hpt_flow_shared_head_human200_robot100_nextobs_30hz_2026-07-14_15-36-35/checkpoints/last.ckpt"
+CKPT_FILTERED_50="$EGOVERSE_ROOT/logs/static_camera_filtered_human50_franka100_shared_head/hpt_flow_shared_head_filtered_human50_robot100_nextobs_30hz_2026-07-14_15-30-40/checkpoints/epoch_epoch=$EPOCH.ckpt"
 CKPT_FRANKA_30="$EGOVERSE_ROOT/logs/static_camera_franka30/hpt_flow_next_observation_30hz_45_front_wrist_2026-07-03_17-14-42/checkpoints/epoch_epoch=$EPOCH.ckpt"
-
+HUMAN_400="/home/madhavan/EgoVerse/logs/old+new_400human_15hz/hpt_flow_human100_robot100_nextobs_15hz_2026-07-16_21-56-03/checkpoints/epoch_epoch=999.ckpt"
+REC_200="/home/madhavan/EgoVerse/logs/rectified_old_15hz/hpt_flow_human100_robot100_nextobs_15hz_2026-07-16_20-52-28/checkpoints/epoch_epoch=999.ckpt"
 for required in \
   "$SERVER_PY" \
   "$EVAL_PY" \
@@ -109,7 +111,7 @@ run_eval() {
     --image-scale-factor 2 \
     --crop-shape 360 480 \
     --wrist-crop-left 160 \
-    --resampled-action-len 45 \
+    --resampled-action-len 0 \
     --crop-viz-output "$preview" \
     >"$server_log" 2>&1 &
   local server_pid=$!
@@ -132,11 +134,11 @@ run_eval() {
       --policy.port "$port" \
       --policy.open-loop-horizon "$OPEN_LOOP_HORIZON" \
       --policy.device cuda:0 \
+      --control-frequency-hz "$CONTROL_FREQUENCY_HZ" \
       --environment DROID-PutRedCup-no-curtain \
       --run-folder "$run_folder" \
       --rollouts "$ROLLOUTS" \
       --seed "$seed" \
-      --no-save-video \
       2>&1 | tee "$eval_log"
   )
 
@@ -158,15 +160,17 @@ run_policy_all_seeds() {
 }
 
 gpu0_queue() {
-  run_policy_all_seeds 0 5560 human50_franka100_epoch$EPOCH "$CKPT_50" || return 1
-  run_policy_all_seeds 0 5560 human100_franka100_epoch$EPOCH "$CKPT_100" || return 1
-  run_policy_all_seeds 0 5560 filtered_human50_franka100_last "$CKPT_FILTERED_50" || return 1
+  # run_policy_all_seeds 0 5560 human50_franka100_epoch$EPOCH "$CKPT_50" || return 1
+  run_policy_all_seeds 0 5560 human400_mix_$EPOCH "$HUMAN_400" || return 1
+  # run_policy_all_seeds 0 5560 human100_franka100_epoch$EPOCH "$CKPT_100" || return 1
+  # run_policy_all_seeds 0 5560 filtered_human50_franka100_last "$CKPT_FILTERED_50" || return 1
 }
 
 gpu1_queue() {
-  run_policy_all_seeds 1 5561 human150_franka100_epoch$EPOCH "$CKPT_150" || return 1
-  run_policy_all_seeds 1 5561 human200_franka100_epoch$EPOCH "$CKPT_200" || return 1
-  run_policy_all_seeds 1 5561 franka30_epoch$EPOCH "$CKPT_FRANKA_30" || return 1
+  # run_policy_all_seeds 1 5561 human150_franka100_epoch$EPOCH "$CKPT_150" || return 1
+  run_policy_all_seeds 1 5561 rectified_human200_$EPOCH "$REC_200" || return 1
+  # run_policy_all_seeds 1 5561 human200_franka100_epoch$EPOCH "$CKPT_200" || return 1
+  # run_policy_all_seeds 1 5561 franka30_epoch$EPOCH "$CKPT_FRANKA_30" || return 1
 }
 
 # A single queue can be resumed while the other GPU continues, for example:

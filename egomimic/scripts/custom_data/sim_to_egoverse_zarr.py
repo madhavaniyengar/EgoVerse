@@ -11,6 +11,7 @@ observation[t] with action[t], so the terminal observation is intentionally drop
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import shutil
 from datetime import datetime, timedelta, timezone
@@ -18,16 +19,48 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from egomimic.rldb.zarr.zarr_writer import ZarrWriter
 
 
 LOGGER = logging.getLogger(__name__)
 CAMERAS = {
-    "cam0.mp4": "images.front_1",
-    "cam1.mp4": "images.front_2",
+    # cam1 is the selected static/task camera and therefore occupies EgoVerse's
+    # primary front-camera slot. cam0 is intentionally omitted.
+    "cam1.mp4": "images.front_1",
     "wrist_cam.mp4": "images.wrist",
 }
+
+
+def _load_world_from_camera(path: Path, camera: str) -> np.ndarray:
+    calibration = json.loads(path.read_text())
+    if camera not in calibration or "extrinsic" not in calibration[camera]:
+        raise KeyError(f"{path} does not contain {camera}.extrinsic")
+    transform = np.asarray(calibration[camera]["extrinsic"], dtype=np.float64)
+    if transform.shape != (4, 4):
+        raise ValueError(f"{camera}.extrinsic must be 4x4, got {transform.shape}")
+    if not np.allclose(transform[3], [0, 0, 0, 1], atol=1e-6):
+        raise ValueError(f"{camera}.extrinsic has an invalid homogeneous bottom row")
+    return transform
+
+
+def _poses_world_to_camera(
+    poses: np.ndarray, world_from_camera: np.ndarray
+) -> np.ndarray:
+    """Transform xyz + quaternion(wxyz) poses from world/base into camera frame."""
+    poses = np.asarray(poses, dtype=np.float64)
+    camera_from_world = np.linalg.inv(world_from_camera)
+    world_from_eef = np.repeat(np.eye(4, dtype=np.float64)[None], len(poses), axis=0)
+    world_from_eef[:, :3, 3] = poses[:, :3]
+    world_from_eef[:, :3, :3] = Rotation.from_quat(
+        poses[:, [4, 5, 6, 3]]
+    ).as_matrix()
+    camera_from_eef = camera_from_world[None] @ world_from_eef
+    quat_xyzw = Rotation.from_matrix(camera_from_eef[:, :3, :3]).as_quat()
+    return np.concatenate(
+        (camera_from_eef[:, :3, 3], quat_xyzw[:, [3, 0, 1, 2]]), axis=1
+    )
 
 
 def _episode_index(path: Path) -> int:
@@ -163,6 +196,8 @@ def convert(
     scale_factor: int,
     crop_shape: tuple[int, int] | None,
     wrist_crop_left: int | None,
+    camera_calibration: Path,
+    eef_camera: str,
     task_name: str,
     task_description: str,
     overwrite: bool,
@@ -173,6 +208,7 @@ def convert(
         microsecond=0
     )
     written = []
+    world_from_camera = _load_world_from_camera(camera_calibration, eef_camera)
 
     for number, episode in enumerate(episode_dirs, start=1):
         episode_index = _episode_index(episode)
@@ -185,6 +221,8 @@ def convert(
             actions_ee = np.asarray(data["action_ee"][keep], dtype=np.float64)
             obs_pose, obs_gripper = states_ee[:, :7], states_ee[:, 7:8]
             cmd_pose, cmd_gripper = actions_ee[:, :7], actions_ee[:, 7:8]
+            obs_pose = _poses_world_to_camera(obs_pose, world_from_camera)
+            cmd_pose = _poses_world_to_camera(cmd_pose, world_from_camera)
 
         image_data = {}
         source_fps = None
@@ -234,6 +272,9 @@ def convert(
                 "spatial_scale_factor": scale_factor,
                 "crop_shape": list(crop_shape) if crop_shape is not None else None,
                 "wrist_crop_left": wrist_crop_left,
+                "pose_frame": f"{eef_camera}_optical",
+                "camera_calibration": str(camera_calibration),
+                "world_from_pose_camera": world_from_camera.tolist(),
             },
         )
         LOGGER.info("[%d/%d] Wrote %s", number, len(episode_dirs), output)
@@ -250,6 +291,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scale-factor", type=int, default=2)
     parser.add_argument("--crop-shape", type=int, nargs=2, default=(360, 480), metavar=("H", "W"))
     parser.add_argument("--wrist-crop-left", type=int, default=160)
+    parser.add_argument("--camera-calibration", type=Path, required=True)
+    parser.add_argument("--eef-camera", default="cam1")
     parser.add_argument("--task-name", default="pick_place_red_mug")
     parser.add_argument("--task-description", default="pick and place the red mug")
     parser.add_argument("--overwrite", action="store_true")
@@ -269,6 +312,8 @@ def main() -> None:
         scale_factor=args.scale_factor,
         crop_shape=tuple(args.crop_shape) if args.crop_shape is not None else None,
         wrist_crop_left=args.wrist_crop_left,
+        camera_calibration=args.camera_calibration,
+        eef_camera=args.eef_camera,
         task_name=args.task_name,
         task_description=args.task_description,
         overwrite=args.overwrite,
