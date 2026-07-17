@@ -1,0 +1,32 @@
+_target_: egomimic.pl_utils.pl_data_utils.MultiDataModuleWrapper
+
+# Franka-only 15 Hz static-camera training. No human dataset is loaded.
+train_datasets:
+  franka_right_arm:
+    _target_: egomimic.rldb.zarr.zarr_dataset_multi.MultiDataset._from_resolver
+    resolver:
+      _target_: egomimic.rldb.zarr.zarr_dataset_multi.LocalEpisodeResolver
+      folder_path: /home/madhavan/EgoVerse/data/custom_franka_zarr/pick_place_red_mug_100_sim
+      key_map:
+        _target_: egomimic.rldb.embodiment.custom.StaticCameraFranka15Hz.get_keymap
+        keymap_mode: cartesian
+      transform_list:
+        _target_: egomimic.rldb.embodiment.custom.StaticCameraFranka15Hz.get_transform_list
+        mode: cartesian
+    mode: train
+    valid_ratio: 0.1
+    check_bounds: false
+
+valid_datasets:
+  franka_right_arm:
+    _target_: ${data.train_datasets.franka_right_arm._target_}
+    resolver: ${data.train_datasets.franka_right_arm.resolver}
+    mode: valid
+    valid_ratio: 0.1
+    check_bounds: false
+
+train_dataloader_params:
+  franka_right_arm: {batch_size: 32, num_workers: 6}
+
+valid_dataloader_params:
+  franka_right_arm: {batch_size: 32, num_workers: 6}

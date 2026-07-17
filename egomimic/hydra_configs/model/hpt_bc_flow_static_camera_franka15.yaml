@@ -1,0 +1,19 @@
+defaults:
+  - hpt_bc_flow_static_camera_franka30
+  - _self_
+
+# Match the 15 Hz separate-head setup's temporal horizon while retaining only
+# the Franka domain and its own FM action head.
+robomimic_model:
+  trunk:
+    action_horizon: 23
+
+  head_specs:
+    franka_right_arm:
+      action_horizon: 23
+      model:
+        act_seq: 23
+
+# Keep optimization consistent with the 15 Hz separate-head configuration.
+optimizer:
+  lr: 3e-4

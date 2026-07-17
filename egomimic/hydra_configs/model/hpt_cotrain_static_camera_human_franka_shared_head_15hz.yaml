@@ -1,8 +1,8 @@
 defaults:
-  - hpt_cotrain_static_camera_human_franka
+  - hpt_cotrain_static_camera_human_franka_15hz
   - _self_
 
-# Single shared flow head for static-camera human/Franka co-training.
+# Single shared flow head for 15 Hz static-camera human/Franka co-training.
 # Human actions are 6D xyz+ypr and are zero-padded by the policy head to
 # match Franka's 7D xyz+ypr+gripper action layout.
 robomimic_model:
@@ -13,7 +13,7 @@ robomimic_model:
     franka_right_arm: null
     shared:
       _target_: egomimic.models.fm_policy.FMPolicy
-      action_horizon: 45
+      action_horizon: 23
       num_inference_steps: 50
       pooling: null
       padding: zero
@@ -27,7 +27,7 @@ robomimic_model:
         cond_dim: 256
         hidden_dim: 128
         act_dim: 7
-        act_seq: 45
+        act_seq: 23
         n_heads: 4
         dropout: 0.1
         mlp_layers: 4

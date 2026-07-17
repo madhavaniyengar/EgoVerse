@@ -1,0 +1,15 @@
+defaults:
+  - train_zarr_cartesian
+  - override model: hpt_bc_flow_static_camera_franka15
+  - override data: static_camera_franka15
+  - _self_
+
+name: static_camera_franka15
+description: hpt_flow_franka_only_next_observation_15hz_23_front_wrist
+
+norm_stats:
+  norm_mode: quantile
+  sample_frac: 1.0
+
+evaluator:
+  viz_func: null
