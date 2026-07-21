@@ -16,13 +16,17 @@ CAMERA_FROM_BASE="$POLARIS_ROOT/PolaRiS-Hub/put_red_cup_no_curtain/cam1_from_bas
 # ninja executable, so make the activation-equivalent PATH explicit.
 export PATH="$POLARIS_ROOT/.venv/bin:$PATH"
 
-ROLLOUTS="${ROLLOUTS:-20}"
-EVAL_SEEDS="${EVAL_SEEDS:-42 43 44}"
+ROLLOUTS="${ROLLOUTS:-100}"
+EVAL_SEEDS="${EVAL_SEEDS:-42}"
 OPEN_LOOP_HORIZON="${OPEN_LOOP_HORIZON:-23}"
 CONTROL_FREQUENCY_HZ="${CONTROL_FREQUENCY_HZ:-15}"
 SERVER_READY_TIMEOUT="${SERVER_READY_TIMEOUT:-180}"
-EPOCH="${EPOCH:-799}"
-SWEEP_NAME="${SWEEP_NAME:-egoverse_rectified200_400_sweep_${EPOCH}_$(date +%Y%m%d_%H%M%S)}"
+
+#----------------------------------------TO-UPDATE----------------------------------------
+EPOCH="${EPOCH:-999}"
+SWEEP_NAME="${SWEEP_NAME:-egoverse_R50_SH_sweep_${EPOCH}_$(date +%Y%m%d_%H%M%S)}"
+#-----------------------------------------------------------------------------------------
+
 SWEEP_ROOT="${SWEEP_ROOT:-$POLARIS_ROOT/runs/$SWEEP_NAME}"
 LOG_DIR="$SWEEP_ROOT/logs"
 PREVIEW_DIR="$SWEEP_ROOT/previews"
@@ -35,21 +39,33 @@ CKPT_FILTERED_50="$EGOVERSE_ROOT/logs/static_camera_filtered_human50_franka100_s
 CKPT_FRANKA_30="$EGOVERSE_ROOT/logs/static_camera_franka30/hpt_flow_next_observation_30hz_45_front_wrist_2026-07-03_17-14-42/checkpoints/epoch_epoch=$EPOCH.ckpt"
 HUMAN_400="/home/madhavan/EgoVerse/logs/old+new_400human_15hz/hpt_flow_human100_robot100_nextobs_15hz_2026-07-16_21-56-03/checkpoints/epoch_epoch=999.ckpt"
 REC_200="/home/madhavan/EgoVerse/logs/rectified_old_15hz/hpt_flow_human100_robot100_nextobs_15hz_2026-07-16_20-52-28/checkpoints/epoch_epoch=999.ckpt"
-for required in \
-  "$SERVER_PY" \
-  "$EVAL_PY" \
-  "$CAMERA_FROM_BASE" \
-  "$CKPT_50" \
-  "$CKPT_100" \
-  "$CKPT_150" \
-  "$CKPT_200" \
-  "$CKPT_FILTERED_50" \
-  "$CKPT_FRANKA_30"; do
-  if [[ ! -e "$required" ]]; then
-    echo "Missing required path: $required" >&2
-    exit 1
-  fi
-done
+FRANKA50="/home/madhavan/EgoVerse/logs/franka50/hpt_flow_franka_only_next_observation_15hz_23_front_wrist_2026-07-17_19-40-50/checkpoints/epoch_epoch=$EPOCH.ckpt"
+FRANKA100="/home/madhavan/EgoVerse/logs/franka100/hpt_flow_franka_only_next_observation_15hz_23_front_wrist_2026-07-17_19-40-42/checkpoints/epoch_epoch=$EPOCH.ckpt"
+CT_200_SH="/home/madhavan/EgoVerse/logs/rectified_old_15hz_sharedhead/hpt_flow_shared_head_human100_robot100_nextobs_15hz_2026-07-19_01-31-48/checkpoints/epoch_epoch=$EPOCH.ckpt"
+CT_400_SH="/home/madhavan/EgoVerse/logs/old+new_400human_15hz_sharedhead/hpt_flow_shared_head_human100_robot100_nextobs_15hz_2026-07-19_01-32-51/checkpoints/epoch_epoch=$EPOCH.ckpt"
+R50_H100="/home/madhavan/EgoVerse/logs/franka50_human100/hpt_flow_human100_robot100_nextobs_15hz_2026-07-17_19-14-44/checkpoints/epoch_epoch=$EPOCH.ckpt"
+R50_H200="/home/madhavan/EgoVerse/logs/franka50_human200/hpt_flow_human100_robot100_nextobs_15hz_2026-07-17_19-16-39/checkpoints/epoch_epoch=$EPOCH.ckpt"
+R50_H400="/home/madhavan/EgoVerse/logs/franka50_human400/hpt_flow_human100_robot100_nextobs_15hz_2026-07-17_19-17-55/checkpoints/epoch_epoch=$EPOCH.ckpt"
+R50_H200_SH="/home/madhavan/EgoVerse/logs/franka50_human200_SH/hpt_flow_shared_head_human100_robot100_nextobs_15hz_2026-07-20_00-41-41/checkpoints/epoch_epoch=$EPOCH.ckpt"
+R50_H400_SH="/home/madhavan/EgoVerse/logs/franka50_human400_SH/hpt_flow_shared_head_human100_robot100_nextobs_15hz_2026-07-20_00-41-57/checkpoints/epoch_epoch=$EPOCH.ckpt"
+
+# for required in \
+#   "$SERVER_PY" \
+#   "$EVAL_PY" \
+#   "$CAMERA_FROM_BASE" \
+#   "$CKPT_50" \
+#   "$CKPT_100" \
+#   "$CKPT_150" \
+#   "$CKPT_200" \
+#   "$CKPT_FILTERED_50" \
+#   "$CKPT_FRANKA_30" \
+#   "$CT_200_SH" \
+#   "$CT_400_SH"; do
+#   if [[ ! -e "$required" ]]; then
+#     echo "Missing required path: $required" >&2
+#     exit 1
+#   fi
+# done
 
 # Running another Isaac evaluation or policy server on the same GPUs can cause
 # severe slowdown or OOM. Override only when that sharing is intentional.
@@ -161,14 +177,15 @@ run_policy_all_seeds() {
 
 gpu0_queue() {
   # run_policy_all_seeds 0 5560 human50_franka100_epoch$EPOCH "$CKPT_50" || return 1
-  run_policy_all_seeds 0 5560 human400_mix_$EPOCH "$HUMAN_400" || return 1
+  # run_policy_all_seeds 0 5560 human400_mix_$EPOCH "$HUMAN_400" || return 1
+  run_policy_all_seeds 0 5560 franka50_human200_SH_$EPOCH "$R50_H200_SH" || return 1
   # run_policy_all_seeds 0 5560 human100_franka100_epoch$EPOCH "$CKPT_100" || return 1
   # run_policy_all_seeds 0 5560 filtered_human50_franka100_last "$CKPT_FILTERED_50" || return 1
 }
 
 gpu1_queue() {
   # run_policy_all_seeds 1 5561 human150_franka100_epoch$EPOCH "$CKPT_150" || return 1
-  run_policy_all_seeds 1 5561 rectified_human200_$EPOCH "$REC_200" || return 1
+  run_policy_all_seeds 1 5561 franka50_human400_SH_$EPOCH "$R50_H400_SH" || return 1
   # run_policy_all_seeds 1 5561 human200_franka100_epoch$EPOCH "$CKPT_200" || return 1
   # run_policy_all_seeds 1 5561 franka30_epoch$EPOCH "$CKPT_FRANKA_30" || return 1
 }
